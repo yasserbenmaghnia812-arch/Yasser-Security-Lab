@@ -1,5 +1,11 @@
 # Open-source tool catalogue (27)
 
+> **Execution status (verified 2026-11-10):** 8 source-analysis tools (Semgrep, Gitleaks, Trivy, Checkov, Syft, Grype, YARA, ClamAV) completed successfully in GitHub Actions and produced report artifacts. Four APK analyzers (JADX, Apktool, Androguard, APKLeaks) are wired into the workflow but were skipped because no APK has been placed in `authorized-samples/`. Eleven network tools (Nmap, ZAP baseline, Nuclei, httpx, Subfinder, Amass, dnsx, Katana, Naabu, testssl.sh, Nikto) are available in a separate manual workflow that requires an explicit authorization confirmation and one exact public target. MobSF, Ghidra, radare2 and mitmproxy remain catalogued but are not yet executable through the hosted workflows. The API currently validates scope and plans jobs; it does not dispatch scans itself.
+
+**Run source/APK analysis:** GitHub → Actions → Authorized Static Security Analysis → Run workflow. For APK analysis, first add your authorized APK under `authorized-samples/` and push it.
+
+**Run a network assessment:** GitHub → Actions → Approved Low-Impact Network Assessment → Run workflow. Confirm written authorization, enter one exact hostname/IP/URL and a scope reference. Wildcards, CIDR, private IPs and localhost are rejected. The workflow uses rate-limited, non-exploit checks only.
+
 Adapters are optional and must pin reviewed releases/digests. The worker enforces authorization, allowlists, rate limits, timeouts, output caps, and audit logging.
 
 | # | Tool | Function | Execution guard |
