@@ -24,7 +24,7 @@ create table if not exists public.analysis_jobs (
  workspace_id uuid not null references public.workspaces(id) on delete cascade,
  asset_id uuid not null references public.assets(id) on delete restrict,
  requested_by uuid not null references auth.users(id) on delete cascade,
- tool_key text not null,
+ tool_key text not null check (length(tool_key) between 1 and 80),
  mode text not null check (mode in ('passive','active','static','reverse_engineering')),
  status text not null default 'queued' check (status in ('queued','running','succeeded','failed','cancelled')),
  approved_at timestamptz,
@@ -77,24 +77,31 @@ create policy "owner updates workspace" on public.workspaces for update to authe
 create policy "owner reads assets" on public.assets for select to authenticated using (
  exists (select 1 from public.workspaces w where w.id = workspace_id and w.owner_id = (select auth.uid()))
 );
-create policy "owner creates assets" on public.assets for insert to authenticated with check (
- created_by = (select auth.uid()) and exists (
+create policy "owner creates unverified assets" on public.assets for insert to authenticated with check (
+ created_by = (select auth.uid())
+ and authorization_confirmed = false
+ and allowed_tests = array['passive']::text[]
+ and exists (
   select 1 from public.workspaces w where w.id = workspace_id and w.owner_id = (select auth.uid())
  )
 );
-create policy "owner updates assets" on public.assets for update to authenticated using (
- exists (select 1 from public.workspaces w where w.id = workspace_id and w.owner_id = (select auth.uid()))
-) with check (
- exists (select 1 from public.workspaces w where w.id = workspace_id and w.owner_id = (select auth.uid()))
-);
+-- Asset authorization and scope changes are server-only; authenticated clients have no UPDATE policy.
 
 create policy "owner reads jobs" on public.analysis_jobs for select to authenticated using (
  exists (select 1 from public.workspaces w where w.id = workspace_id and w.owner_id = (select auth.uid()))
 );
-create policy "user queues authorized asset job" on public.analysis_jobs for insert to authenticated with check (
- requested_by = (select auth.uid()) and approved_at is null and exists (
+create policy "user queues authorized non-active job" on public.analysis_jobs for insert to authenticated with check (
+ requested_by = (select auth.uid())
+ and approved_at is null
+ and approved_by is null
+ and status = 'queued'
+ and started_at is null
+ and finished_at is null
+ and mode in ('passive','static','reverse_engineering')
+ and exists (
   select 1 from public.workspaces w where w.id = workspace_id and w.owner_id = (select auth.uid())
- ) and exists (
+ )
+ and exists (
   select 1 from public.assets a where a.id = asset_id and a.workspace_id = workspace_id
    and a.authorization_confirmed = true and (a.expires_at is null or a.expires_at > now())
  )
@@ -108,4 +115,4 @@ create policy "owner reads audit" on public.audit_events for select to authentic
  exists (select 1 from public.workspaces w where w.id = workspace_id and w.owner_id = (select auth.uid()))
 );
 
--- Approval, status changes, finding inserts, and audit writes are server-only.
+-- Approval, asset authorization, job status changes, finding inserts, and audit writes are server-only.
