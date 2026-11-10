@@ -424,7 +424,7 @@ def assistant_review(request: AssistantRequest, user: dict[str, Any] = Depends(c
         },
         {
             "role": "user",
-            "content": "Question:\\n" + request.question + "\\n\\nContext:\\n" + request.context,
+            "content": "Question:\n" + request.question + "\n\nContext:\n" + request.context,
         },
     ]
     headers = {
