@@ -1,0 +1,82 @@
+name: APK Analyzer Integration Test
+run-name: Analyze the YSL debug APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - '.github/workflows/apk-self-test.yml'
+permissions:
+  contents: read
+jobs:
+  analyze-built-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - uses: android-actions/setup-android@v3
+        with:
+          accept-android-sdk-licenses: true
+          packages: platform-tools
+      - name: Build the YSL APK
+        run: |
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+          gradle --no-daemon :app:assembleDebug
+          mkdir -p reports
+          cp app/build/outputs/apk/debug/app-debug.apk reports/yasser-security-lab.apk
+          sha256sum reports/yasser-security-lab.apk > reports/sha256.txt
+      - name: Install Apktool and JADX
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y apktool unzip curl
+          python - <<'PY'
+          import json, os, urllib.request
+          req = urllib.request.Request("https://api.github.com/repos/skylot/jadx/releases/latest", headers={"Accept":"application/vnd.github+json","Authorization":"Bearer "+os.environ["GH_TOKEN"]})
+          with urllib.request.urlopen(req, timeout=30) as response:
+              release = json.load(response)
+          asset = next((a for a in release["assets"] if a["name"].startswith("jadx-") and a["name"].endswith(".zip")), None)
+          if not asset:
+              raise SystemExit("JADX release ZIP not found")
+          urllib.request.urlretrieve(asset["browser_download_url"], "/tmp/jadx.zip")
+          PY
+          mkdir -p "$HOME/tools/jadx"
+          unzip -q /tmp/jadx.zip -d "$HOME/tools/jadx"
+      - name: Run Apktool and JADX
+        run: |
+          apktool d -f reports/yasser-security-lab.apk -o reports/apktool
+          "$HOME/tools/jadx/bin/jadx" --show-bad-code -d reports/jadx reports/yasser-security-lab.apk
+          apkanalyzer manifest print reports/yasser-security-lab.apk > reports/manifest.xml
+      - name: Start MobSF static analyzer
+        run: |
+          key="$(openssl rand -hex 32)"
+          echo "MOBSF_KEY=$key" >> "$GITHUB_ENV"
+          docker run -d --name mobsf -p 8000:8000 -e MOBSF_API_KEY="$key" -e MOBSF_API_ONLY=1 opensecurity/mobile-security-framework-mobsf:latest
+          for attempt in $(seq 1 60); do
+            if curl -fsS -H "Authorization: $key" http://127.0.0.1:8000/api/v1/scans -o /dev/null; then exit 0; fi
+            sleep 5
+          done
+          docker logs mobsf
+          exit 1
+      - name: Run MobSF static analysis
+        run: |
+          curl --fail -F "file=@reports/yasser-security-lab.apk" -H "Authorization: $MOBSF_KEY" http://127.0.0.1:8000/api/v1/upload -o reports/mobsf-upload.json
+          hash="$(python -c 'import json; print(json.load(open("reports/mobsf-upload.json"))["hash"])')"
+          curl --fail -X POST --data-urlencode "hash=$hash" -H "Authorization: $MOBSF_KEY" http://127.0.0.1:8000/api/v1/scan -o reports/mobsf-scan.json
+          curl --fail -X POST --data-urlencode "hash=$hash" -H "Authorization: $MOBSF_KEY" http://127.0.0.1:8000/api/v1/report_json -o reports/mobsf-report.json
+      - name: Upload APK and scanner reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ysl-apk-integration-test-reports
+          path: reports/
+          if-no-files-found: warn
