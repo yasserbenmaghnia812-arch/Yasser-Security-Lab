@@ -18,6 +18,9 @@ on:
       - "api/**"
       - "app/**"
       - "supabase/**"
+      - "index.html"
+      - "render.yaml"
+      - ".gitleaks.toml"
       - ".github/workflows/security-static.yml"
 
 permissions:
