@@ -247,3 +247,21 @@ def test_supabase_auth_does_not_require_service_role_key(monkeypatch):
     monkeypatch.setattr(main.httpx, "get", lambda *args, **kwargs: Response())
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="user-access-token")
     assert main.current_user(credentials) == {"id": "user-12345678"}
+
+
+@pytest.mark.parametrize("status_code", [200, 204])
+def test_dispatch_accepts_documented_github_success_codes(monkeypatch, status_code):
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+
+    class Response:
+        def __init__(self, code):
+            self.status_code = code
+
+    calls = []
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs["json"]))
+        return Response(status_code)
+
+    monkeypatch.setattr(main.httpx, "post", fake_post)
+    main._dispatch_static("job-12345678")
+    assert calls[0][1]["inputs"]["job_id"] == "job-12345678"
