@@ -33,8 +33,7 @@ jobs:
       - name: Install required Android SDK packages
         shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
       - name: Build debug APK
         run: gradle --no-daemon :app:assembleDebug
       - name: Upload APK
