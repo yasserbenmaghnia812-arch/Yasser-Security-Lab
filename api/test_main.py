@@ -231,3 +231,19 @@ def test_ai_advisory_requires_server_side_key(monkeypatch):
         "context": ""
     })
     assert response.status_code == 503
+
+
+def test_supabase_auth_does_not_require_service_role_key(monkeypatch):
+    from fastapi.security import HTTPAuthorizationCredentials
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "sb_publishable_test_public_key")
+    monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
+
+    class Response:
+        status_code = 200
+        def json(self):
+            return {"id": "user-12345678"}
+
+    monkeypatch.setattr(main.httpx, "get", lambda *args, **kwargs: Response())
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="user-access-token")
+    assert main.current_user(credentials) == {"id": "user-12345678"}
