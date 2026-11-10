@@ -1,0 +1,112 @@
+name: Approved Low-Impact Network Assessment
+on:
+  workflow_dispatch:
+    inputs:
+      authorization_confirmed:
+        description: "I own this target or have written permission to test it"
+        required: true
+        type: boolean
+        default: false
+      target:
+        description: "One exact hostname, IP, or URL (no wildcards or CIDR)"
+        required: true
+        type: string
+      scope_note:
+        description: "Authorization reference and allowed scope"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  approved-assessment:
+    if: inputs.authorization_confirmed == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate single target and authorization note
+        env:
+          INPUT_TARGET: ${{ inputs.target }}
+          SCOPE_NOTE: ${{ inputs.scope_note }}
+        run: |
+          python - <<'PY'
+          import ipaddress, os, re, socket
+          from urllib.parse import urlsplit
+          raw = os.environ["INPUT_TARGET"].strip()
+          note = os.environ["SCOPE_NOTE"].strip()
+          if not note or len(note) < 8:
+              raise SystemExit("A meaningful authorization/scope note is required.")
+          if not raw or "*" in raw or "/" in raw and "://" not in raw:
+              raise SystemExit("Use one exact host/IP/URL. Wildcards and CIDR are not accepted.")
+          value = raw if "://" in raw else "https://" + raw
+          u = urlsplit(value)
+          if u.scheme not in ("http", "https") or not u.hostname or u.username or u.password:
+              raise SystemExit("Target must be one HTTP(S) URL or hostname.")
+          host = u.hostname.rstrip(".").lower()
+          if host in ("localhost",) or "." not in host and not host.replace(":", "").isdigit():
+              raise SystemExit("Localhost and single-label hostnames are not accepted.")
+          try:
+              ip = ipaddress.ip_address(host)
+              if not ip.is_global:
+                  raise SystemExit("Private, loopback, link-local and reserved IPs are not accepted by this hosted workflow.")
+          except ValueError:
+              if not re.fullmatch(r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}", host):
+                  raise SystemExit("Invalid hostname.")
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write("TARGET_URL=" + value + "\n")
+              f.write("TARGET_HOST=" + host + "\n")
+          print("Scope note recorded in workflow logs. Target: " + host)
+          PY
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+      - name: Install network tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nmap git perl
+          go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+          go install github.com/projectdiscovery/httpx/cmd/httpx@latest
+          go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+          go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest
+          go install github.com/projectdiscovery/katana/cmd/katana@latest
+          go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest
+          go install github.com/owasp-amass/amass/v4/cmd/amass@master
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+          git clone --depth 1 https://github.com/testssl/testssl.sh.git "$HOME/testssl"
+          git clone --depth 1 https://github.com/sullo/nikto.git "$HOME/nikto"
+      - name: Run low-rate passive discovery
+        env:
+          TARGET_HOST: ${{ env.TARGET_HOST }}
+        run: |
+          mkdir -p reports
+          subfinder -d "$TARGET_HOST" -silent -o reports/subfinder.txt || true
+          amass enum -passive -d "$TARGET_HOST" -o reports/amass.txt || true
+          dnsx -d "$TARGET_HOST" -resp -silent -o reports/dnsx.txt || true
+      - name: Run rate-limited service and web checks
+        env:
+          TARGET_HOST: ${{ env.TARGET_HOST }}
+          TARGET_URL: ${{ env.TARGET_URL }}
+        run: |
+          mkdir -p reports
+          nmap -Pn -sV -T2 --top-ports 50 --max-retries 1 --host-timeout 5m "$TARGET_HOST" -oN reports/nmap.txt || true
+          naabu -host "$TARGET_HOST" -top-ports 100 -rate 15 -retries 1 -silent -o reports/naabu.txt || true
+          httpx -u "$TARGET_URL" -status-code -title -tech-detect -rate-limit 2 -json -o reports/httpx.json || true
+          katana -u "$TARGET_URL" -d 2 -c 2 -rl 2 -silent -o reports/katana.txt || true
+          nuclei -u "$TARGET_URL" -tags misconfig,exposure -severity info,low,medium -rate-limit 2 -c 2 -retries 0 -timeout 5 -exclude-tags dos,intrusive,exploit -jsonl -o reports/nuclei.jsonl || true
+          "$HOME/testssl/testssl.sh" --fast --quiet --jsonfile reports/testssl.json "$TARGET_HOST" || true
+          perl "$HOME/nikto/program/nikto.pl" -host "$TARGET_URL" -maxtime 2m -output reports/nikto.txt -Format txt || true
+      - name: OWASP ZAP passive baseline
+        env:
+          TARGET_URL: ${{ env.TARGET_URL }}
+        run: |
+          docker run --rm -v "$PWD/reports:/zap/wrk/:rw" ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t "$TARGET_URL" -m 1 -J zap.json -I || true
+          if [ -f reports/zap.json ]; then mv reports/zap.json reports/zap-baseline.json; fi
+      - name: Upload assessment reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yasser-security-lab-approved-network-reports
+          path: reports/
+          if-no-files-found: warn
