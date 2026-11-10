@@ -1,7 +1,12 @@
 name: Authorized Static Security Analysis
+run-name: API job ${{ inputs.job_id || 'manual' }}
 on:
   workflow_dispatch:
     inputs:
+      job_id:
+        description: API job identifier used to associate the workflow run with its database record
+        required: false
+        type: string
       confirm_owned_files:
         description: "Confirm all files in this repository are yours or authorized for analysis"
         required: true
