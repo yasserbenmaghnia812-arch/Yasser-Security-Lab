@@ -60,11 +60,18 @@ class AssistantRequest(BaseModel):
 TOOLS = TOOL_REGISTRY
 
 
-def _config() -> tuple[str, str, str]:
+def _auth_config() -> tuple[str, str]:
     url = os.getenv("SUPABASE_URL", "").rstrip("/")
     anon_key = os.getenv("SUPABASE_ANON_KEY", "")
+    if not url or not anon_key:
+        raise HTTPException(status_code=503, detail="Supabase public authentication configuration is incomplete.")
+    return url, anon_key
+
+
+def _config() -> tuple[str, str, str]:
+    url, anon_key = _auth_config()
     service_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
-    if not url or not anon_key or not service_key:
+    if not service_key:
         raise HTTPException(status_code=503, detail="Supabase server configuration is incomplete.")
     return url, anon_key, service_key
 
@@ -81,7 +88,7 @@ def current_user(
 ) -> dict[str, Any]:
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="A valid Supabase access token is required.")
-    url, anon_key, _ = _config()
+    url, anon_key = _auth_config()
     try:
         response = httpx.get(
             f"{url}/auth/v1/user",
