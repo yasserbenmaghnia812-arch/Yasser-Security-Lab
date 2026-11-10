@@ -79,8 +79,12 @@ fun SecurityLabApp() {
                 ToolGroup("تحليل الكود والاعتماديات", "Semgrep • Gitleaks • Trivy • Checkov • Syft • Grype • YARA • ClamAV", "متاح عبر GitHub Actions")
                 ToolGroup("تحليل تطبيقات Android", "MobSF • JADX • Apktool • Androguard • APKLeaks • Ghidra • radare2", "ضع APK المصرح به داخل authorized-samples/ لتشغيل 7 محللات")
                 ToolGroup("الشبكات والويب", "Nmap • ZAP • Nuclei • httpx • Subfinder • Amass • dnsx • Katana • Naabu • testssl.sh • Nikto", "تشغيل يدوي مع تأكيد الإذن")
-                Text("قيد الدمج", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                ToolGroup("أداة لم تكتمل", "mitmproxy", "تحتاج ربط وكيل اعتراض محلي مع جهازك")
+                Text("الوكيل المحلي", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                ToolGroup("mitmproxy", "اعتراض وتحليل حركة جهاز اختبار تملكه", "تشغيل محلي عبر Termux — لا تفتح الوكيل للإنترنت")
+                OutlinedButton(onClick = { open("https://github.com/yasserbenmaghnia812-arch/Yasser-Security-Lab/blob/main/docs/MITMPROXY-TERMUX.md") },
+                    modifier = Modifier.fillMaxWidth()) {
+                    Text("دليل إعداد mitmproxy")
+                }
                 Text("النتائج والتقارير", fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 Button(onClick = { open("https://github.com/yasserbenmaghnia812-arch/Yasser-Security-Lab/actions") },
                     modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Ink)) {
