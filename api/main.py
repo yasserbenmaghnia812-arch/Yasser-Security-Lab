@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Any
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
@@ -16,6 +16,9 @@ app = FastAPI(title="Yasser Security Lab API", version="0.3.0")
 security = HTTPBearer(auto_error=False)
 REPOSITORY = os.getenv("GITHUB_REPOSITORY", "yasserbenmaghnia812-arch/Yasser-Security-Lab")
 STATIC_WORKFLOW = "security-static.yml"
+APK_WORKFLOW = "apk-analysis-api.yml"
+APK_BUCKET = "apk-uploads"
+MAX_APK_BYTES = 150 * 1024 * 1024
 STATIC_TOOLS = {"semgrep", "gitleaks", "trivy", "checkov", "grype", "syft", "yara", "clamav"}
 
 origins = [item.strip() for item in os.getenv("ALLOWED_ORIGINS", "").split(",") if item.strip()]
@@ -192,6 +195,20 @@ def _audit(workspace_id: str, user_id: str, job_id: str, event_type: str) -> Non
         app.logger.warning("Audit write failed for job %s", job_id)
 
 
+def _dispatch_apk(job_id: str, download_url: str, file_name: str) -> None:
+    token = os.getenv("GITHUB_TOKEN", "")
+    if not token:
+        raise HTTPException(status_code=503, detail="GitHub Actions dispatch is not configured on the API service.")
+    endpoint = f"https://api.github.com/repos/{REPOSITORY}/actions/workflows/{APK_WORKFLOW}/dispatches"
+    headers = {"Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}", "X-GitHub-Api-Version": "2022-11-28"}
+    try:
+        response = httpx.post(endpoint, headers=headers, json={"ref":"main","inputs":{"job_id":job_id,"download_url":download_url,"file_name":file_name}}, timeout=20.0)
+    except httpx.HTTPError:
+        raise HTTPException(status_code=503, detail="GitHub Actions could not be reached.")
+    if response.status_code not in (200, 204):
+        raise HTTPException(status_code=502, detail="GitHub rejected the APK analysis workflow dispatch.")
+
+
 def _dispatch_static(job_id: str) -> None:
     token = os.getenv("GITHUB_TOKEN", "")
     if not token:
@@ -240,7 +257,8 @@ def _find_github_run(job_id: str) -> dict[str, Any] | None:
     token = os.getenv("GITHUB_TOKEN", "")
     if not token:
         return None
-    url = f"https://api.github.com/repos/{REPOSITORY}/actions/workflows/{STATIC_WORKFLOW}/runs"
+    workflow = APK_WORKFLOW if job_id.startswith("apk-") else STATIC_WORKFLOW
+    url = f"https://api.github.com/repos/{REPOSITORY}/actions/workflows/{workflow}/runs"
     try:
         response = httpx.get(
             url,
@@ -412,6 +430,79 @@ def register_source_asset(registration: SourceAssetRegistration, user: dict[str,
         raise HTTPException(status_code=503, detail="Could not register the authorized source asset in Supabase.")
 
 
+@app.post("/v1/apks/upload")
+async def upload_apk(
+    request: Request,
+    file_name: str,
+    authorization_note: str,
+    user: dict[str, Any] = Depends(current_user),
+):
+    if len(authorization_note.strip()) < 12:
+        raise HTTPException(status_code=400, detail="A clear authorization statement is required.")
+    safe_name = os.path.basename(file_name).replace(" ", "_")
+    if not safe_name.lower().endswith(".apk") or len(safe_name) > 160:
+        raise HTTPException(status_code=400, detail="Only APK files with a valid .apk filename are accepted.")
+    content_length = int(request.headers.get("content-length", "0") or 0)
+    if content_length > MAX_APK_BYTES:
+        raise HTTPException(status_code=413, detail="APK exceeds the 150 MB upload limit.")
+    data = await request.body()
+    if not data or len(data) > MAX_APK_BYTES:
+        raise HTTPException(status_code=413 if len(data) > MAX_APK_BYTES else 400, detail="APK is empty or exceeds the 150 MB upload limit.")
+    if not data.startswith(b"PK\\x03\\x04"):
+        raise HTTPException(status_code=415, detail="The uploaded file does not have a valid APK/ZIP signature.")
+    url, _, service_key = _config()
+    headers = _service_headers(service_key)
+    workspace_response = httpx.get(
+        f"{url}/rest/v1/workspaces",
+        params={"owner_id":f"eq.{user['id']}","select":"id","limit":"1"},
+        headers=headers, timeout=15.0
+    )
+    workspace_response.raise_for_status()
+    workspaces = workspace_response.json()
+    if workspaces:
+        workspace_id = workspaces[0]["id"]
+    else:
+        created = httpx.post(f"{url}/rest/v1/workspaces",json={"owner_id":user["id"],"name":"Yasser Security Lab"},headers=_service_headers(service_key,"return=representation"),timeout=15.0)
+        created.raise_for_status()
+        workspace_id = created.json()[0]["id"]
+    object_path = f"{user['id']}/{__import__('uuid').uuid4().hex}/{safe_name}"
+    storage_headers = {"apikey":service_key,"Authorization":f"Bearer {service_key}","Content-Type":"application/vnd.android.package-archive","x-upsert":"false"}
+    upload = httpx.post(f"{url}/storage/v1/object/{APK_BUCKET}/{object_path}",content=data,headers=storage_headers,timeout=90.0)
+    if upload.status_code not in (200, 201):
+        raise HTTPException(status_code=502,detail="Supabase Storage upload failed. Check that the private apk-uploads bucket exists.")
+    asset_payload = {
+        "workspace_id":workspace_id,"created_by":user["id"],"asset_type":"apk",
+        "identifier":safe_name,"authorization_confirmed":True,"authorization_note":authorization_note,
+        "allowed_tests":["reverse_engineering"],"expires_at":(datetime.now(timezone.utc)+timedelta(days=7)).isoformat()
+    }
+    asset_response = httpx.post(f"{url}/rest/v1/assets",json=asset_payload,headers=_service_headers(service_key,"return=representation"),timeout=15.0)
+    if asset_response.status_code not in (200,201):
+        raise HTTPException(status_code=502,detail="APK uploaded, but its authorized asset record could not be created.")
+    asset = asset_response.json()[0]
+    signed = httpx.post(f"{url}/storage/v1/object/sign/{APK_BUCKET}/{object_path}",json={"expiresIn":3600},headers=_service_headers(service_key),timeout=15.0)
+    if signed.status_code not in (200,201):
+        raise HTTPException(status_code=502,detail="APK uploaded, but a temporary analysis download URL could not be created.")
+    signed_path = signed.json().get("signedURL") or signed.json().get("signedUrl")
+    if not signed_path:
+        raise HTTPException(status_code=502,detail="Supabase did not return a signed APK download URL.")
+    download_url = signed_path if signed_path.startswith("http") else f"{url}/storage/v1{signed_path}"
+    job_payload = {
+        "workspace_id":workspace_id,"asset_id":asset["id"],"requested_by":user["id"],
+        "tool_key":"mobsf","mode":"reverse_engineering","status":"queued",
+        "parameters":{"file_name":safe_name,"storage_path":object_path}
+    }
+    job_response = httpx.post(f"{url}/rest/v1/analysis_jobs",json=job_payload,headers=_service_headers(service_key,"return=representation"),timeout=15.0)
+    job_response.raise_for_status()
+    job = job_response.json()[0]
+    try:
+        _dispatch_apk(job["id"],download_url,safe_name)
+    except HTTPException:
+        httpx.patch(f"{url}/rest/v1/analysis_jobs",params={"id":f"eq.{job['id']}"},json={"status":"failed","finished_at":datetime.now(timezone.utc).isoformat()},headers=_service_headers(service_key,"return=minimal"),timeout=10.0)
+        raise
+    _audit(workspace_id,user["id"],job["id"],"apk_analysis_dispatched")
+    return {"status":"queued","job_id":job["id"],"asset_id":asset["id"],"file_name":safe_name,"message":"APK uploaded and analysis workflow dispatched."}
+
+
 @app.post("/v1/assistant/review")
 def assistant_review(request: AssistantRequest, user: dict[str, Any] = Depends(current_user)):
     api_key = os.getenv("OPENROUTER_API_KEY", "")
@@ -532,5 +623,5 @@ def dispatch_job(job: JobPlan, user: dict[str, Any] = Depends(current_user)):
 @app.get("/v1/jobs/{job_id}")
 def job_status(job_id: str, user: dict[str, Any] = Depends(current_user)):
     job = _get_job(job_id, user["id"])
-    run = _find_github_run(job_id) if job["mode"] == "static" else None
+    run = _find_github_run(job_id) if job["mode"] in {"static", "reverse_engineering"} else None
     return _sync_job_status(job, run)
