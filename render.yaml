@@ -20,3 +20,7 @@ services:
         value: authenticated
       - key: ALLOWED_ORIGINS
         sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: GITHUB_REPOSITORY
+        value: yasserbenmaghnia812-arch/Yasser-Security-Lab
