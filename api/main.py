@@ -2,6 +2,7 @@ import os
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException
@@ -11,8 +12,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from tool_registry import TOOL_REGISTRY, public_tool_catalog
 
-app = FastAPI(title="Yasser Security Lab API", version="0.2.0")
+app = FastAPI(title="Yasser Security Lab API", version="0.3.0")
 security = HTTPBearer(auto_error=False)
+REPOSITORY = os.getenv("GITHUB_REPOSITORY", "yasserbenmaghnia812-arch/Yasser-Security-Lab")
+STATIC_WORKFLOW = "security-static.yml"
+STATIC_TOOLS = {"semgrep", "gitleaks", "trivy", "checkov", "grype", "syft", "yara", "clamav"}
 
 origins = [item.strip() for item in os.getenv("ALLOWED_ORIGINS", "").split(",") if item.strip()]
 if origins:
@@ -52,6 +56,13 @@ def _config() -> tuple[str, str, str]:
     return url, anon_key, service_key
 
 
+def _service_headers(service_key: str, prefer: str | None = None) -> dict[str, str]:
+    headers = {"apikey": service_key, "Authorization": f"Bearer {service_key}", "Content-Type": "application/json"}
+    if prefer:
+        headers["Prefer"] = prefer
+    return headers
+
+
 def current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> dict[str, Any]:
@@ -76,14 +87,11 @@ def current_user(
 
 def load_authorized_asset(asset_id: str, user_id: str) -> dict[str, Any]:
     url, _, service_key = _config()
-    headers = {
-        "apikey": service_key,
-        "Authorization": f"Bearer {service_key}",
-    }
+    headers = _service_headers(service_key)
     try:
         asset_response = httpx.get(
             f"{url}/rest/v1/assets",
-            params={"id": f"eq.{asset_id}", "select": "id,workspace_id,identifier,authorization_confirmed,allowed_tests,expires_at"},
+            params={"id": f"eq.{asset_id}", "select": "id,workspace_id,asset_type,identifier,authorization_confirmed,allowed_tests,expires_at"},
             headers=headers,
             timeout=10.0,
         )
@@ -108,6 +116,161 @@ def load_authorized_asset(asset_id: str, user_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail="Could not verify the asset scope in Supabase.")
 
 
+def _assert_asset_authorized(asset: dict[str, Any], mode: Mode) -> None:
+    if not asset.get("authorization_confirmed"):
+        raise HTTPException(status_code=403, detail="This asset has not been verified by the server.")
+    expires_at = asset.get("expires_at")
+    if expires_at:
+        expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        if expiry <= datetime.now(timezone.utc):
+            raise HTTPException(status_code=403, detail="The asset authorization has expired.")
+    if mode.value not in (asset.get("allowed_tests") or []):
+        raise HTTPException(status_code=403, detail="This test mode is outside the approved asset scope.")
+
+
+def _insert_job(job: JobPlan, asset: dict[str, Any], user_id: str) -> dict[str, Any]:
+    url, _, service_key = _config()
+    payload = {
+        "workspace_id": asset["workspace_id"],
+        "asset_id": asset["id"],
+        "requested_by": user_id,
+        "tool_key": job.tool_key,
+        "mode": job.mode.value,
+        "status": "queued",
+        "parameters": job.parameters,
+    }
+    try:
+        response = httpx.post(
+            f"{url}/rest/v1/analysis_jobs",
+            json=payload,
+            headers=_service_headers(service_key, "return=representation"),
+            timeout=15.0,
+        )
+        response.raise_for_status()
+        rows = response.json()
+        if not rows:
+            raise HTTPException(status_code=503, detail="Supabase did not return the queued job.")
+        return rows[0]
+    except HTTPException:
+        raise
+    except httpx.HTTPError:
+        raise HTTPException(status_code=503, detail="Could not create the analysis job in Supabase.")
+
+
+def _audit(workspace_id: str, user_id: str, job_id: str, event_type: str) -> None:
+    url, _, service_key = _config()
+    try:
+        response = httpx.post(
+            f"{url}/rest/v1/audit_events",
+            json={"workspace_id": workspace_id, "actor_id": user_id, "event_type": event_type, "object_id": job_id},
+            headers=_service_headers(service_key, "return=minimal"),
+            timeout=10.0,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError:
+        # Audit failure is surfaced in service logs; it must not leak privileged details.
+        app.logger.warning("Audit write failed for job %s", job_id)
+
+
+def _dispatch_static(job_id: str) -> None:
+    token = os.getenv("GITHUB_TOKEN", "")
+    if not token:
+        raise HTTPException(status_code=503, detail="GitHub Actions dispatch is not configured on the API service.")
+    endpoint = f"https://api.github.com/repos/{REPOSITORY}/actions/workflows/{STATIC_WORKFLOW}/dispatches"
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {token}",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    try:
+        response = httpx.post(
+            endpoint,
+            headers=headers,
+            json={"ref": "main", "inputs": {"confirm_owned_files": "true", "job_id": job_id}},
+            timeout=20.0,
+        )
+    except httpx.HTTPError:
+        raise HTTPException(status_code=503, detail="GitHub Actions could not be reached.")
+    if response.status_code != 204:
+        raise HTTPException(status_code=502, detail="GitHub rejected the workflow dispatch. Check the Actions permission on the API token.")
+
+
+def _get_job(job_id: str, user_id: str) -> dict[str, Any]:
+    url, _, service_key = _config()
+    try:
+        response = httpx.get(
+            f"{url}/rest/v1/analysis_jobs",
+            params={"id": f"eq.{job_id}", "requested_by": f"eq.{user_id}", "select": "id,workspace_id,asset_id,tool_key,mode,status,created_at,started_at,finished_at"},
+            headers=_service_headers(service_key),
+            timeout=10.0,
+        )
+        response.raise_for_status()
+        rows = response.json()
+        if not rows:
+            raise HTTPException(status_code=404, detail="Job was not found.")
+        return rows[0]
+    except HTTPException:
+        raise
+    except httpx.HTTPError:
+        raise HTTPException(status_code=503, detail="Could not retrieve the job from Supabase.")
+
+
+def _find_github_run(job_id: str) -> dict[str, Any] | None:
+    token = os.getenv("GITHUB_TOKEN", "")
+    if not token:
+        return None
+    url = f"https://api.github.com/repos/{REPOSITORY}/actions/workflows/{STATIC_WORKFLOW}/runs"
+    try:
+        response = httpx.get(
+            url,
+            params={"per_page": 100, "branch": "main"},
+            headers={"Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}", "X-GitHub-Api-Version": "2022-11-28"},
+            timeout=15.0,
+        )
+        response.raise_for_status()
+        expected = f"API job {job_id}"
+        return next((run for run in response.json().get("workflow_runs", []) if run.get("display_title") == expected), None)
+    except httpx.HTTPError:
+        return None
+
+
+def _sync_job_status(job: dict[str, Any], run: dict[str, Any] | None) -> dict[str, Any]:
+    if not run:
+        return {**job, "github_run": None}
+    state = run.get("status")
+    conclusion = run.get("conclusion")
+    mapped = "running" if state == "in_progress" or state == "queued" else (
+        "succeeded" if conclusion == "success" else "failed" if conclusion else job["status"]
+    )
+    if mapped != job["status"]:
+        url, _, service_key = _config()
+        patch = {"status": mapped}
+        if mapped == "running" and not job.get("started_at"):
+            patch["started_at"] = datetime.now(timezone.utc).isoformat()
+        if mapped in {"succeeded", "failed"}:
+            patch["finished_at"] = datetime.now(timezone.utc).isoformat()
+        try:
+            httpx.patch(
+                f"{url}/rest/v1/analysis_jobs",
+                params={"id": f"eq.{job['id']}"},
+                json=patch,
+                headers=_service_headers(service_key, "return=minimal"),
+                timeout=10.0,
+            ).raise_for_status()
+        except httpx.HTTPError:
+            pass
+    return {
+        **job,
+        "status": mapped,
+        "github_run": {
+            "id": run.get("id"),
+            "url": run.get("html_url"),
+            "status": state,
+            "conclusion": conclusion,
+        },
+    }
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "yasser-security-lab-api"}
@@ -116,14 +279,16 @@ def health():
 @app.get("/v1/tools")
 def list_tools():
     catalog = public_tool_catalog()
-    enabled = sum(1 for item in catalog.values() if item["execution_available"])
+    enabled = sum(1 for item in catalog.values() if item["workflow_enabled"])
+    dispatch_configured = bool(os.getenv("GITHUB_TOKEN") and os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
     return {
         "tools": catalog,
         "integrations_catalogued": len(catalog),
         "workflow_enabled": enabled,
-        "api_dispatch_enabled": False,
-        "execution_enabled": False,
-        "note": "Run the authorized static workflow from GitHub Actions. The API does not yet dispatch or execute jobs.",
+        "api_dispatch_enabled": dispatch_configured,
+        "execution_enabled": dispatch_configured,
+        "dispatch_modes": ["static"] if dispatch_configured else [],
+        "note": "API dispatch is restricted to approved static source scans. Active network testing and APK reverse engineering require separate workflows and scope checks.",
     }
 
 
@@ -134,36 +299,12 @@ def plan_job(job: JobPlan, user: dict[str, Any] = Depends(current_user)):
     required_mode = TOOLS[job.tool_key]["mode"]
     if job.mode.value != required_mode:
         raise HTTPException(status_code=400, detail="Requested mode does not match this adapter.")
-
     asset = load_authorized_asset(job.asset_id, user["id"])
-    if not asset.get("authorization_confirmed"):
-        raise HTTPException(status_code=403, detail="This asset has not been verified by the server.")
-    expires_at = asset.get("expires_at")
-    if expires_at:
-        expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
-        if expiry <= datetime.now(timezone.utc):
-            raise HTTPException(status_code=403, detail="The asset authorization has expired.")
-    allowed_tests = asset.get("allowed_tests") or []
-    if job.mode.value not in allowed_tests:
-        raise HTTPException(status_code=403, detail="This test mode is outside the approved asset scope.")
-
+    _assert_asset_authorized(asset, job.mode)
     if job.mode == Mode.active:
-        return {
-            "status": "approval_required",
-            "plan_only": True,
-            "message": "Active assessment requires a separate server-recorded approval. No scan was started.",
-        }
-
-    tool = TOOLS[job.tool_key]
-    if not tool["workflow_enabled"]:
-        return {
-            "status": "adapter_not_ready",
-            "plan_only": True,
-            "execution_enabled": False,
-            "tool": job.tool_key,
-            "reason": tool["reason"],
-        }
-
+        return {"status": "approval_required", "plan_only": True, "message": "Active assessment requires a separate server-recorded approval. No scan was started."}
+    if not TOOLS[job.tool_key]["workflow_enabled"]:
+        return {"status": "adapter_not_ready", "plan_only": True, "execution_enabled": False, "tool": job.tool_key}
     return {
         "status": "workflow_available",
         "plan_only": True,
@@ -171,5 +312,44 @@ def plan_job(job: JobPlan, user: dict[str, Any] = Depends(current_user)):
         "tool": job.tool_key,
         "mode": job.mode.value,
         "asset": asset["identifier"],
-        "message": "This tool is available through the authorized GitHub Actions workflow. API dispatch is not configured.",
+        "message": "This endpoint only plans work. Use POST /v1/jobs/dispatch for approved static scans.",
     }
+
+
+@app.post("/v1/jobs/dispatch")
+def dispatch_job(job: JobPlan, user: dict[str, Any] = Depends(current_user)):
+    if job.tool_key not in STATIC_TOOLS or job.mode != Mode.static:
+        raise HTTPException(status_code=403, detail="The API currently dispatches static source-analysis tools only.")
+    if job.tool_key not in TOOLS or TOOLS[job.tool_key]["mode"] != "static":
+        raise HTTPException(status_code=400, detail="Tool and mode do not match.")
+    asset = load_authorized_asset(job.asset_id, user["id"])
+    _assert_asset_authorized(asset, job.mode)
+    if asset.get("asset_type") != "source":
+        raise HTTPException(status_code=400, detail="Static repository scans require a source asset registered in this workspace.")
+    if not os.getenv("GITHUB_TOKEN"):
+        raise HTTPException(status_code=503, detail="GitHub Actions dispatch is not configured on the API service.")
+    record = _insert_job(job, asset, user["id"])
+    try:
+        _dispatch_static(record["id"])
+    except HTTPException:
+        url, _, service_key = _config()
+        try:
+            httpx.patch(
+                f"{url}/rest/v1/analysis_jobs",
+                params={"id": f"eq.{record['id']}"},
+                json={"status": "failed", "finished_at": datetime.now(timezone.utc).isoformat()},
+                headers=_service_headers(service_key, "return=minimal"),
+                timeout=10.0,
+            )
+        except httpx.HTTPError:
+            pass
+        raise
+    _audit(asset["workspace_id"], user["id"], record["id"], "analysis_job_dispatched")
+    return {"status": "queued", "job_id": record["id"], "tool": job.tool_key, "mode": "static", "message": "GitHub Actions workflow accepted the dispatch. Query the job endpoint for progress."}
+
+
+@app.get("/v1/jobs/{job_id}")
+def job_status(job_id: str, user: dict[str, Any] = Depends(current_user)):
+    job = _get_job(job_id, user["id"])
+    run = _find_github_run(job_id) if job["mode"] == "static" else None
+    return _sync_job_status(job, run)
