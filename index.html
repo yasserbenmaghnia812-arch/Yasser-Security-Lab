@@ -41,11 +41,19 @@ label{display:block;font-size:13px;color:#d7d2cc;margin:12px 0 6px}input,textare
  <textarea id="scope" placeholder="مثال: أملك مستودع Yasser-Security-Lab وأصرّح بفحص الكود والاعتماديات داخله."></textarea>
  <div class="actions"><button id="run">تأكيد النطاق وتشغيل الفحص</button><button class="secondary" id="refresh">تحديث حالة آخر مهمة</button></div>
  <div class="status" id="result" aria-live="polite">لم يتم تشغيل أي مهمة بعد.</div>
+  <div class="card" id="aiCard">
+   <h2>مساعد الأمن السيبراني بالذكاء الاصطناعي</h2>
+   <p>تحليل وتوصيات دفاعية فقط. لا ينفذ المساعد أوامر ولا يشغّل أدوات الفحص.</p>
+   <label for="aiQuestion">اكتب سؤالك أو الصق مقتطفاً من تقرير</label>
+   <textarea id="aiQuestion" placeholder="مثال: حلل نتيجة Semgrep واقترح إصلاحاً آمناً."></textarea>
+   <div class="actions"><button id="askAi">تحليل باستخدام النموذج المجاني</button></div>
+   <div class="status" id="aiResult" aria-live="polite">المساعد يحتاج مفتاح OpenRouter مجانياً في إعدادات Render.</div>
+  </div>
 </section>
-<footer class="foot">المفتاح العام فقط مضمّن في واجهة المتصفح. مفاتيح الخدمة تبقى على الخادم.</footer>
+<footer class="foot">إعدادات Supabase العامة تُحمّل من API. مفاتيح الخدمة والذكاء الاصطناعي تبقى على الخادم.</footer>
 </main>
 <script>
-let SUPABASE_URL="", SUPABASE_KEY="", configPromise=null;
+let SUPABASE_URL="", SUPABASE_KEY="", configPromise=null, aiEnabled=false;
 const $=id=>document.getElementById(id);
 let accessToken=sessionStorage.getItem("ysl_access_token")||"";
 let currentAsset=sessionStorage.getItem("ysl_asset_id")||"";
@@ -53,15 +61,16 @@ let currentJob=sessionStorage.getItem("ysl_job_id")||"";
 const api=()=> $("api").value.trim().replace(/\/+$/,"");
 function message(id,text){$(id).textContent=text}
 function headers(){return {"apikey":SUPABASE_KEY,"Content-Type":"application/json"}}
-async function ensureConfig(){if(SUPABASE_URL&&SUPABASE_KEY)return;if(!configPromise){configPromise=(async()=>{const r=await fetch(api()+"/v1/config");const data=await r.json();if(!r.ok)throw new Error(data.detail||"تعذر تحميل إعدادات الاتصال");SUPABASE_URL=data.supabase_url;SUPABASE_KEY=data.supabase_publishable_key;if(!SUPABASE_URL||!SUPABASE_KEY)throw new Error("إعدادات Supabase غير مكتملة");})();}return configPromise;}
+async function ensureConfig(){if(SUPABASE_URL&&SUPABASE_KEY)return;if(!configPromise){configPromise=(async()=>{const r=await fetch(api()+"/v1/config");const data=await r.json();if(!r.ok)throw new Error(data.detail||"تعذر تحميل إعدادات الاتصال");SUPABASE_URL=data.supabase_url;SUPABASE_KEY=data.supabase_publishable_key;aiEnabled=data.ai_enabled===true;$("askAi").disabled=!aiEnabled;if(!SUPABASE_URL||!SUPABASE_KEY)throw new Error("إعدادات Supabase غير مكتملة");if(!aiEnabled)message("aiResult","أضف OPENROUTER_API_KEY إلى Render لتفعيل المساعد.");})();}return configPromise;}
 function apiHeaders(){return {"Authorization":"Bearer "+accessToken,"Content-Type":"application/json"}}
 function setSignedIn(ok){$("authCard").classList.toggle("hidden",ok);$("scanCard").classList.toggle("hidden",!ok)}
 async function auth(path,body){await ensureConfig();const r=await fetch(SUPABASE_URL+"/auth/v1/"+path,{method:"POST",headers:headers(),body:JSON.stringify(body)});const data=await r.json();if(!r.ok)throw new Error(data.msg||data.message||data.error_description||"تعذر تسجيل الدخول");return data}
 async function signIn(create){try{message("authMsg","جارٍ الاتصال...");const email=$("email").value.trim(),password=$("password").value;if(!email||!password)throw new Error("أدخل البريد وكلمة المرور.");const data=await auth(create?"signup":"token?grant_type=password",{email,password});if(!data.access_token){message("authMsg","تم إنشاء الحساب. إذا كان تأكيد البريد مفعلاً، أكّد بريدك ثم سجّل الدخول.");return}accessToken=data.access_token;sessionStorage.setItem("ysl_access_token",accessToken);setSignedIn(true);message("authMsg","تم تسجيل الدخول.");}catch(e){message("authMsg",e.message)}}
 async function request(path,body){const r=await fetch(api()+path,{method:"POST",headers:apiHeaders(),body:JSON.stringify(body)});const data=await r.json().catch(()=>({detail:"استجابة غير مفهومة من API"}));if(!r.ok)throw new Error(data.detail||"فشل الطلب");return data}
 async function run(){try{if(!$("authorized").checked)throw new Error("يجب تأكيد ملكية المستودع أو الإذن المكتوب.");const note=$("scope").value.trim();if(note.length<12)throw new Error("أدخل ملاحظة تفويض واضحة (12 حرفاً على الأقل).");$("run").disabled=true;message("result","تسجيل النطاق المصرح به...");const asset=await request("/v1/assets/register",{authorization_confirmed:true,authorization_note:note});currentAsset=asset.asset_id;sessionStorage.setItem("ysl_asset_id",currentAsset);message("result","تم تسجيل النطاق. جارٍ إرسال مهمة Semgrep إلى GitHub Actions...");const job=await request("/v1/jobs/dispatch",{asset_id:currentAsset,tool_key:"semgrep",mode:"static"});currentJob=job.job_id;sessionStorage.setItem("ysl_job_id",currentJob);message("result","تم قبول المهمة. رقم المهمة: "+currentJob+"\nالحالة: "+job.status+"\nاضغط تحديث حالة آخر مهمة بعد قليل.");}catch(e){message("result","خطأ: "+e.message)}finally{$("run").disabled=false}}
+async function askAi(){try{const question=$("aiQuestion").value.trim();if(question.length<5)throw new Error("اكتب سؤالاً من 5 أحرف على الأقل.");if(!aiEnabled)throw new Error("أضف OPENROUTER_API_KEY إلى Render أولاً.");$("askAi").disabled=true;message("aiResult","جارٍ التحليل...");const data=await request("/v1/assistant/review",{question,context:$("result").textContent});message("aiResult",data.answer+"\n\nالنموذج: "+data.model+(data.fallback_used?" (النموذج الاحتياطي)":""));}catch(e){message("aiResult","خطأ: "+e.message)}finally{$("askAi").disabled=!aiEnabled}}
 async function refresh(){try{if(!currentJob)throw new Error("لا توجد مهمة محفوظة في هذه الجلسة.");const r=await fetch(api()+"/v1/jobs/"+encodeURIComponent(currentJob),{headers:apiHeaders()});const data=await r.json();if(!r.ok)throw new Error(data.detail||"تعذر جلب الحالة");let text="المهمة: "+data.id+"\nالحالة: "+data.status;if(data.github_run){text+="\nGitHub: "+data.github_run.status+" / "+(data.github_run.conclusion||"قيد التنفيذ");if(data.github_run.url)text+="\nرابط التشغيل: "+data.github_run.url}message("result",text)}catch(e){message("result","خطأ: "+e.message)}}
-$("login").onclick=()=>signIn(false);$("signup").onclick=()=>signIn(true);$("logout").onclick=()=>{accessToken="";currentAsset="";currentJob="";sessionStorage.clear();setSignedIn(false)};$("run").onclick=run;$("refresh").onclick=refresh;
+$("login").onclick=()=>signIn(false);$("signup").onclick=()=>signIn(true);$("logout").onclick=()=>{accessToken="";currentAsset="";currentJob="";sessionStorage.clear();setSignedIn(false)};$("run").onclick=run;$("refresh").onclick=refresh;$("askAi").onclick=askAi;
 setSignedIn(!!accessToken);
 ensureConfig().then(()=>message("authMsg","إعدادات الاتصال جاهزة.")).catch(e=>message("authMsg","تعذر الاتصال بالخدمة: "+e.message));
 </script>
