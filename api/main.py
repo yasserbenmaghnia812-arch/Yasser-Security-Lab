@@ -340,7 +340,7 @@ def list_tools():
         "workflow_enabled": enabled,
         "api_dispatch_enabled": dispatch_configured,
         "execution_enabled": dispatch_configured,
-        "dispatch_modes": ["static"] if dispatch_configured else [],
+        "dispatch_modes": (["static", "reverse_engineering"] if dispatch_configured else []),
         "note": "API dispatch is restricted to approved static source scans. Active network testing and APK reverse engineering require separate workflows and scope checks.",
     }
 
@@ -472,14 +472,14 @@ async def upload_apk(
         raise HTTPException(status_code=502,detail="Supabase Storage upload failed. Check that the private apk-uploads bucket exists.")
     asset_payload = {
         "workspace_id":workspace_id,"created_by":user["id"],"asset_type":"apk",
-        "identifier":safe_name,"authorization_confirmed":True,"authorization_note":authorization_note,
+        "identifier":object_path,"authorization_confirmed":True,"authorization_note":authorization_note,
         "allowed_tests":["reverse_engineering"],"expires_at":(datetime.now(timezone.utc)+timedelta(days=7)).isoformat()
     }
     asset_response = httpx.post(f"{url}/rest/v1/assets",json=asset_payload,headers=_service_headers(service_key,"return=representation"),timeout=15.0)
     if asset_response.status_code not in (200,201):
         raise HTTPException(status_code=502,detail="APK uploaded, but its authorized asset record could not be created.")
     asset = asset_response.json()[0]
-    signed = httpx.post(f"{url}/storage/v1/object/sign/{APK_BUCKET}/{object_path}",json={"expiresIn":3600},headers=_service_headers(service_key),timeout=15.0)
+    signed = httpx.post(f"{url}/storage/v1/object/sign/{APK_BUCKET}/{object_path}",json={"expiresIn":7200},headers=_service_headers(service_key),timeout=15.0)
     if signed.status_code not in (200,201):
         raise HTTPException(status_code=502,detail="APK uploaded, but a temporary analysis download URL could not be created.")
     signed_path = signed.json().get("signedURL") or signed.json().get("signedUrl")
