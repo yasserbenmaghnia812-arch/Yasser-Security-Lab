@@ -25,7 +25,7 @@ def test_tool_catalog_is_plan_only():
     response = client.get("/v1/tools")
     assert response.status_code == 200
     assert response.json()["integrations_catalogued"] == 27
-    assert response.json()["workflow_enabled"] == 8
+    assert response.json()["workflow_enabled"] == 11
     assert response.json()["api_dispatch_enabled"] is False
     assert response.json()["execution_enabled"] is False
 
@@ -274,3 +274,23 @@ def test_only_executed_source_scanners_are_advertised_as_api_enabled():
     assert enabled == {"semgrep", "gitleaks", "trivy", "checkov", "grype", "syft", "yara", "clamav"}
     assert tools["nmap"]["execution_available"] is False
     assert tools["mobsf"]["execution_available"] is False
+
+
+def test_apk_upload_requires_valid_filename_and_authorization(monkeypatch):
+    authenticated_user()
+    response = client.post(
+        "/v1/apks/upload?file_name=not-a-file.txt&authorization_note=I own this application and authorize testing.",
+        content=b"PK\\x03\\x04test",
+        headers={"Content-Type":"application/octet-stream"},
+    )
+    assert response.status_code == 400
+
+
+def test_apk_upload_requires_authorization_note(monkeypatch):
+    authenticated_user()
+    response = client.post(
+        "/v1/apks/upload?file_name=sample.apk&authorization_note=short",
+        content=b"PK\\x03\\x04test",
+        headers={"Content-Type":"application/octet-stream"},
+    )
+    assert response.status_code == 400
