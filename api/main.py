@@ -278,7 +278,7 @@ def _sync_job_status(job: dict[str, Any], run: dict[str, Any] | None) -> dict[st
         return {**job, "github_run": None}
     state = run.get("status")
     conclusion = run.get("conclusion")
-    mapped = "running" if state == "in_progress" or state == "queued" else (
+    mapped = "running" if state == "in_progress" else "queued" if state == "queued" else (
         "succeeded" if conclusion == "success" else "failed" if conclusion else job["status"]
     )
     if mapped != job["status"]:
