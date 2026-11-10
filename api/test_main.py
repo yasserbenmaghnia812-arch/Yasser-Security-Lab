@@ -109,3 +109,42 @@ def test_api_does_not_dispatch_active_or_apk_jobs(monkeypatch):
         "asset_id": "asset-123456", "tool_key": "nmap", "mode": "active"
     })
     assert response.status_code == 403
+
+
+def test_source_asset_registration_requires_explicit_attestation(monkeypatch):
+    authenticated_user()
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "public-test-key")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "server-test-key")
+
+    class Response:
+        def __init__(self, payload):
+            self.payload = payload
+        def json(self):
+            return self.payload
+        def raise_for_status(self):
+            return None
+
+    def fake_get(url, **kwargs):
+        if url.endswith("/workspaces"):
+            return Response([])
+        if url.endswith("/assets"):
+            return Response([])
+        raise AssertionError(url)
+
+    def fake_post(url, **kwargs):
+        if url.endswith("/workspaces"):
+            return Response([{"id": "workspace-123456"}])
+        if url.endswith("/assets"):
+            return Response([{"id": "asset-123456"}])
+        raise AssertionError(url)
+
+    monkeypatch.setattr(main.httpx, "get", fake_get)
+    monkeypatch.setattr(main.httpx, "post", fake_post)
+    response = client.post("/v1/assets/register", json={
+        "authorization_confirmed": True,
+        "authorization_note": "I own this repository and authorize static analysis."
+    })
+    assert response.status_code == 200
+    assert response.json()["asset_id"] == "asset-123456"
+    assert response.json()["allowed_tests"] == ["static"]
