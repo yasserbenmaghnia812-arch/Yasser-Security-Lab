@@ -11,15 +11,15 @@ services:
     autoDeployTrigger: off
     envVars:
       - key: SUPABASE_URL
-        sync: false
+        value: https://jokemrlulcvoiahfnagz.supabase.co
       - key: SUPABASE_ANON_KEY
-        sync: false
+        value: sb_publishable_2mydKfQGvTbpzop2JJs_Jw_gnTr2JZK
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
       - key: JWT_AUDIENCE
         value: authenticated
       - key: ALLOWED_ORIGINS
-        sync: false
+        value: https://yasser-security-lab.vercel.app
       - key: GITHUB_TOKEN
         sync: false
       - key: GITHUB_REPOSITORY
