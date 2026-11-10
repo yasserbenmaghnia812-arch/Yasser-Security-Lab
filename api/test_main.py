@@ -294,3 +294,54 @@ def test_apk_upload_requires_authorization_note(monkeypatch):
         headers={"Content-Type":"application/octet-stream"},
     )
     assert response.status_code == 400
+
+
+def test_apk_upload_stores_private_asset_and_dispatches_analysis(monkeypatch):
+    authenticated_user()
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "public-test-key")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "server-test-key")
+    monkeypatch.setenv("GITHUB_TOKEN", "github-test-token")
+
+    class Response:
+        def __init__(self, payload, status_code=200):
+            self.payload = payload
+            self.status_code = status_code
+        def json(self):
+            return self.payload
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise main.httpx.HTTPStatusError("failed", request=None, response=None)
+
+    def fake_get(url, **kwargs):
+        if url.endswith("/workspaces"):
+            return Response([{"id": "workspace-123456"}])
+        raise AssertionError(url)
+
+    def fake_post(url, **kwargs):
+        if "/storage/v1/object/apk-uploads/" in url:
+            return Response({}, 200)
+        if url.endswith("/rest/v1/assets"):
+            return Response([{"id": "asset-123456"}], 201)
+        if "/storage/v1/object/sign/apk-uploads/" in url:
+            return Response({"signedURL": "/object/sign/apk-uploads/user-12345678/test/sample.apk?token=temporary"})
+        if url.endswith("/rest/v1/analysis_jobs"):
+            return Response([{"id": "job-12345678"}], 201)
+        raise AssertionError(url)
+
+    dispatched = []
+    monkeypatch.setattr(main.httpx, "get", fake_get)
+    monkeypatch.setattr(main.httpx, "post", fake_post)
+    monkeypatch.setattr(main, "_dispatch_apk", lambda *args: dispatched.append(args))
+    monkeypatch.setattr(main, "_audit", lambda *_: None)
+
+    response = client.post(
+        "/v1/apks/upload?file_name=sample.apk&authorization_note=I+own+this+APK+and+authorize+static+security+analysis.",
+        content=b"PK\\x03\\x04sample-apk-bytes",
+        headers={"Content-Type": "application/vnd.android.package-archive"},
+    )
+    assert response.status_code == 200
+    assert response.json()["job_id"] == "job-12345678"
+    assert dispatched[0][0] == "job-12345678"
+    assert dispatched[0][1].startswith("https://example.supabase.co/storage/v1/object/sign/")
+    assert dispatched[0][2] == "sample.apk"
