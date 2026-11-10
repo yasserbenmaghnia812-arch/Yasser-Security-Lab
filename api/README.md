@@ -11,6 +11,7 @@ Python 3.11+:
 - `GET /v1/config` — public Supabase URL and publishable key only; never returns the service-role key.
 - `POST /v1/assets/register` — registers the fixed source repository after explicit ownership/authorization attestation.
 - `GET /v1/tools` — 27-tool registry and current dispatch configuration.
+- `POST /v1/assistant/review` — authenticated defensive AI advice; never executes tools.
 - `POST /v1/jobs/plan` — authenticated scope validation; never starts a scan.
 - `POST /v1/jobs/dispatch` — dispatches an approved **static source-analysis** job to GitHub Actions.
 - `GET /v1/jobs/{job_id}` — returns job state and the matching GitHub Actions run when available.
@@ -28,11 +29,16 @@ Active network tests are **not** dispatched by this API. They remain behind the 
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY` (publishable/anon key only)
 - `SUPABASE_SERVICE_ROLE_KEY` (server-side secret; never ship to Android or Vercel browser code)
-- `GITHUB_TOKEN` (fine-grained token with Actions: write for this repository; never ship to the APK)
+- `GITHUB_TOKEN` (fine-grained token with Actions: read/write for this repository; never ship to the APK)
+- `OPENROUTER_API_KEY` (optional; server-side key for free open-weight advisory models)
 - `GITHUB_REPOSITORY` (defaults to this repository)
 - `ALLOWED_ORIGINS` (comma-separated exact web origins; can remain empty for native-only clients)
 
 Do not send secrets in chat or commit them to Git. Add them through Render's Environment page. The GitHub token should be least-privilege and stored only on the server.
+
+## AI advisory model
+
+The API supports OpenRouter's free open-weight model routes. Defaults are `cohere/north-mini-code:free` with `nvidia/nemotron-3.5-lightning:free` as fallback. Both are configurable with `OPENROUTER_MODEL` and `OPENROUTER_FALLBACK_MODEL`. The free catalog and rate limits can change; no paid model is selected by default. The assistant is advisory-only and has no tool execution permissions.
 
 ## Current tool execution model
 
