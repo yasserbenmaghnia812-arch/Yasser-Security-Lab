@@ -253,11 +253,11 @@ def _get_job(job_id: str, user_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail="Could not retrieve the job from Supabase.")
 
 
-def _find_github_run(job_id: str) -> dict[str, Any] | None:
+def _find_github_run(job_id: str, mode: str = "static") -> dict[str, Any] | None:
     token = os.getenv("GITHUB_TOKEN", "")
     if not token:
         return None
-    workflow = APK_WORKFLOW if job_id.startswith("apk-") else STATIC_WORKFLOW
+    workflow = APK_WORKFLOW if mode == "reverse_engineering" else STATIC_WORKFLOW
     url = f"https://api.github.com/repos/{REPOSITORY}/actions/workflows/{workflow}/runs"
     try:
         response = httpx.get(
@@ -623,5 +623,5 @@ def dispatch_job(job: JobPlan, user: dict[str, Any] = Depends(current_user)):
 @app.get("/v1/jobs/{job_id}")
 def job_status(job_id: str, user: dict[str, Any] = Depends(current_user)):
     job = _get_job(job_id, user["id"])
-    run = _find_github_run(job_id) if job["mode"] in {"static", "reverse_engineering"} else None
+    run = _find_github_run(job_id, job["mode"]) if job["mode"] in {"static", "reverse_engineering"} else None
     return _sync_job_status(job, run)
