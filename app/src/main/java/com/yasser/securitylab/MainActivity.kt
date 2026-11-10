@@ -95,6 +95,10 @@ fun SecurityLabApp() {
                     modifier = Modifier.fillMaxWidth()) {
                     Text("المستودع والإعدادات")
                 }
+                Button(onClick = { open("https://yasser-security-lab.vercel.app") },
+                    modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Red)) {
+                    Text("فتح لوحة التحكم السحابية")
+                }
                 Text("تنبيه: التطبيق يفتح سير العمل السحابي؛ الربط المباشر بين API والتطبيق لم يكتمل بعد.", color = Muted, fontSize = 11.sp)
             }
         }
