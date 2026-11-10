@@ -2,13 +2,14 @@ import os
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
-from urllib.parse import quote
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
+
+from tool_registry import TOOL_REGISTRY, public_tool_catalog
 
 app = FastAPI(title="Yasser Security Lab API", version="0.2.0")
 security = HTTPBearer(auto_error=False)
@@ -39,21 +40,7 @@ class JobPlan(BaseModel):
     parameters: dict[str, Any] = Field(default_factory=dict)
 
 
-TOOLS = {
-    "nmap": {"mode": "active", "description": "Approved network inventory"},
-    "zap": {"mode": "active", "description": "Authorized web application assessment"},
-    "nuclei": {"mode": "active", "description": "Curated non-destructive template checks"},
-    "semgrep": {"mode": "static", "description": "Source code analysis"},
-    "gitleaks": {"mode": "static", "description": "Secret scanning"},
-    "trivy": {"mode": "static", "description": "Dependency and image scanning"},
-    "mobsf": {"mode": "reverse_engineering", "description": "Mobile application analysis"},
-    "jadx": {"mode": "reverse_engineering", "description": "APK/DEX inspection"},
-    "apktool": {"mode": "reverse_engineering", "description": "APK resource inspection"},
-    "androguard": {"mode": "reverse_engineering", "description": "Android static analysis"},
-    "ghidra": {"mode": "reverse_engineering", "description": "Authorized binary analysis"},
-    "yara": {"mode": "static", "description": "Static malware pattern matching"},
-    "clamav": {"mode": "static", "description": "Malware file scanning"},
-}
+TOOLS = TOOL_REGISTRY
 
 
 def _config() -> tuple[str, str, str]:
@@ -128,7 +115,16 @@ def health():
 
 @app.get("/v1/tools")
 def list_tools():
-    return {"tools": TOOLS, "integrations_catalogued": 27, "execution_enabled": False}
+    catalog = public_tool_catalog()
+    enabled = sum(1 for item in catalog.values() if item["execution_available"])
+    return {
+        "tools": catalog,
+        "integrations_catalogued": len(catalog),
+        "workflow_enabled": enabled,
+        "api_dispatch_enabled": False,
+        "execution_enabled": False,
+        "note": "Run the authorized static workflow from GitHub Actions. The API does not yet dispatch or execute jobs.",
+    }
 
 
 @app.post("/v1/jobs/plan")
@@ -158,12 +154,22 @@ def plan_job(job: JobPlan, user: dict[str, Any] = Depends(current_user)):
             "message": "Active assessment requires a separate server-recorded approval. No scan was started.",
         }
 
+    tool = TOOLS[job.tool_key]
+    if not tool["workflow_enabled"]:
+        return {
+            "status": "adapter_not_ready",
+            "plan_only": True,
+            "execution_enabled": False,
+            "tool": job.tool_key,
+            "reason": tool["reason"],
+        }
+
     return {
-        "status": "planned",
+        "status": "workflow_available",
         "plan_only": True,
         "execution_enabled": False,
         "tool": job.tool_key,
         "mode": job.mode.value,
         "asset": asset["identifier"],
-        "message": "Scope verified. Scanner execution is not enabled in this API release.",
+        "message": "This tool is available through the authorized GitHub Actions workflow. API dispatch is not configured.",
     }
