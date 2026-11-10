@@ -161,3 +161,73 @@ def test_public_config_exposes_only_publishable_supabase_settings(monkeypatch):
         "supabase_publishable_key": "sb_publishable_test_public_key"
     }
     assert "must-never-be-returned" not in response.text
+
+
+def test_ai_advisory_uses_free_openrouter_model(monkeypatch):
+    authenticated_user()
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
+    calls = []
+
+    class Response:
+        status_code = 200
+        def json(self):
+            return {
+                "model": "cohere/north-mini-code:free",
+                "choices": [{"message": {"content": "تحقق من صلاحيات الوصول وسجلات التطبيق."}}]
+            }
+
+    def fake_post(url, **kwargs):
+        calls.append(kwargs["json"]["model"])
+        return Response()
+
+    monkeypatch.setattr(main.httpx, "post", fake_post)
+    response = client.post("/v1/assistant/review", json={
+        "question": "راجع إعدادات أمان التطبيق.",
+        "context": "لا توجد نتائج فحص مرفقة."
+    })
+    assert response.status_code == 200
+    assert response.json()["provider"] == "OpenRouter"
+    assert response.json()["execution_enabled"] is False
+    assert calls == ["cohere/north-mini-code:free"]
+
+
+def test_ai_advisory_falls_back_to_second_free_model(monkeypatch):
+    authenticated_user()
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
+    calls = []
+
+    class Response:
+        def __init__(self, status_code, payload):
+            self.status_code = status_code
+            self.payload = payload
+        def json(self):
+            return self.payload
+
+    def fake_post(url, **kwargs):
+        model = kwargs["json"]["model"]
+        calls.append(model)
+        if len(calls) == 1:
+            return Response(429, {})
+        return Response(200, {
+            "model": "nvidia/nemotron-3.5-lightning:free",
+            "choices": [{"message": {"content": "راجع إعدادات TLS."}}]
+        })
+
+    monkeypatch.setattr(main.httpx, "post", fake_post)
+    response = client.post("/v1/assistant/review", json={
+        "question": "حلل إعدادات TLS.",
+        "context": ""
+    })
+    assert response.status_code == 200
+    assert response.json()["fallback_used"] is True
+    assert calls == ["cohere/north-mini-code:free", "nvidia/nemotron-3.5-lightning:free"]
+
+
+def test_ai_advisory_requires_server_side_key(monkeypatch):
+    authenticated_user()
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    response = client.post("/v1/assistant/review", json={
+        "question": "حلل هذا التقرير الأمني.",
+        "context": ""
+    })
+    assert response.status_code == 503
