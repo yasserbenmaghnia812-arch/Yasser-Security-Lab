@@ -25,7 +25,7 @@ def test_tool_catalog_is_plan_only():
     response = client.get("/v1/tools")
     assert response.status_code == 200
     assert response.json()["integrations_catalogued"] == 27
-    assert response.json()["workflow_enabled"] == 26
+    assert response.json()["workflow_enabled"] == 8
     assert response.json()["api_dispatch_enabled"] is False
     assert response.json()["execution_enabled"] is False
 
@@ -265,3 +265,12 @@ def test_dispatch_accepts_documented_github_success_codes(monkeypatch, status_co
     monkeypatch.setattr(main.httpx, "post", fake_post)
     main._dispatch_static("job-12345678")
     assert calls[0][1]["inputs"]["job_id"] == "job-12345678"
+
+
+def test_only_executed_source_scanners_are_advertised_as_api_enabled():
+    response = client.get("/v1/tools")
+    tools = response.json()["tools"]
+    enabled = {key for key, item in tools.items() if item["workflow_enabled"]}
+    assert enabled == {"semgrep", "gitleaks", "trivy", "checkov", "grype", "syft", "yara", "clamav"}
+    assert tools["nmap"]["execution_available"] is False
+    assert tools["mobsf"]["execution_available"] is False
