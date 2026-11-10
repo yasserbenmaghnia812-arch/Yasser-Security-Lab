@@ -1,0 +1,133 @@
+name: Authorized Static Security Analysis
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_owned_files:
+        description: "Confirm all files in this repository are yours or authorized for analysis"
+        required: true
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - "api/**"
+      - "app/**"
+      - "supabase/**"
+      - ".github/workflows/security-static.yml"
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  source-analysis:
+    if: github.event_name == 'push' || inputs.confirm_owned_files == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Semgrep and Checkov
+        run: python -m pip install --disable-pip-version-check semgrep checkov
+      - name: Semgrep source analysis
+        run: |
+          semgrep scan --config auto --json --output semgrep.json api app supabase || true
+      - name: Checkov infrastructure analysis
+        run: |
+          checkov -d . --framework github_actions,terraform,kubernetes,dockerfile,helm,secrets --output json > checkov.json || true
+      - name: Gitleaks secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: json
+          output: trivy.json
+          severity: HIGH,CRITICAL
+          exit-code: "0"
+      - name: Install Syft and Grype
+        uses: anchore/sbom-action/download-syft@v0
+      - name: Generate SBOM
+        run: syft dir:. -o cyclonedx-json=sbom.cdx.json
+      - name: Install Grype
+        uses: anchore/scan-action/download-grype@v5
+      - name: Scan SBOM dependencies
+        run: grype sbom:sbom.cdx.json -o json > grype.json || true
+      - name: Install YARA and ClamAV
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y yara clamav
+      - name: YARA repository scan
+        run: yara -r /usr/share/yara/rules/index.yar . > yara.txt 2>&1 || true
+      - name: ClamAV repository scan
+        run: |
+          sudo freshclam || true
+          clamscan -r --infected --log=clamav.txt . || true
+      - name: Upload source-analysis reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yasser-security-lab-source-reports
+          path: |
+            semgrep.json
+            checkov.json
+            trivy.json
+            sbom.cdx.json
+            grype.json
+            yara.txt
+            clamav.txt
+          if-no-files-found: warn
+
+  apk-static-analysis:
+    if: github.event_name == 'push' || inputs.confirm_owned_files == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Find authorized APK samples
+        id: samples
+        shell: bash
+        run: |
+          mkdir -p reports
+          find authorized-samples -type f -iname '*.apk' -print 2>/dev/null > reports/apk-files.txt || true
+          if [ -s reports/apk-files.txt ]; then echo "found=true" >> "$GITHUB_OUTPUT"; else echo "found=false" >> "$GITHUB_OUTPUT"; fi
+      - name: Install APK static-analysis tools
+        if: steps.samples.outputs.found == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y default-jre apktool
+          python -m pip install --disable-pip-version-check androguard apkleaks
+          mkdir -p "$HOME/tools"
+          curl -fsSL https://github.com/skylot/jadx/releases/latest/download/jadx-1.5.1.zip -o "$HOME/tools/jadx.zip"
+          unzip -q "$HOME/tools/jadx.zip" -d "$HOME/tools/jadx"
+      - name: Analyze authorized APK files
+        if: steps.samples.outputs.found == 'true'
+        shell: bash
+        run: |
+          set +e
+          while IFS= read -r apk; do
+            base="$(basename "$apk" .apk)"
+            mkdir -p "reports/$base"
+            apktool d -f "$apk" -o "reports/$base/resources"
+            "$HOME/tools/jadx/bin/jadx" -d "reports/$base/source" "$apk"
+            apkleaks -f "$apk" -o "reports/$base/apkleaks.txt"
+            python - "$apk" "reports/$base/androguard.txt" <<'PY'
+          import sys
+          from androguard.misc import AnalyzeAPK
+          a, ds, dx = AnalyzeAPK(sys.argv[1])
+          with open(sys.argv[2], "w", encoding="utf-8") as f:
+              f.write("Package: " + str(a.get_package()) + "\n")
+              f.write("Permissions:\n" + "\n".join(a.get_permissions()) + "\n")
+              f.write("Activities:\n" + "\n".join(a.get_activities()) + "\n")
+          PY
+          done < reports/apk-files.txt
+      - name: Upload APK analysis reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yasser-security-lab-apk-reports
+          path: reports/
+          if-no-files-found: warn
