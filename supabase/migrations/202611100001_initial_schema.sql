@@ -116,3 +116,9 @@ create policy "owner reads audit" on public.audit_events for select to authentic
 );
 
 -- Approval, asset authorization, job status changes, finding inserts, and audit writes are server-only.
+
+
+-- Private bucket for authorized APK uploads. Objects are written only by the API service role.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('apk-uploads', 'apk-uploads', false, 157286400, array['application/vnd.android.package-archive','application/octet-stream'])
+on conflict (id) do update set public = false, file_size_limit = 157286400;
