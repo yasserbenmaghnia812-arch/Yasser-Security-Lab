@@ -156,10 +156,10 @@ def test_public_config_exposes_only_publishable_supabase_settings(monkeypatch):
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "must-never-be-returned")
     response = client.get("/v1/config")
     assert response.status_code == 200
-    assert response.json() == {
-        "supabase_url": "https://example.supabase.co",
-        "supabase_publishable_key": "sb_publishable_test_public_key"
-    }
+    data = response.json()
+    assert data["supabase_url"] == "https://example.supabase.co"
+    assert data["supabase_publishable_key"] == "sb_publishable_test_public_key"
+    assert data["ai_enabled"] is False
     assert "must-never-be-returned" not in response.text
 
 
