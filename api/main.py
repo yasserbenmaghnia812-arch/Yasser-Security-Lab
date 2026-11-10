@@ -211,7 +211,8 @@ def _dispatch_static(job_id: str) -> None:
         )
     except httpx.HTTPError:
         raise HTTPException(status_code=503, detail="GitHub Actions could not be reached.")
-    if response.status_code != 204:
+    # GitHub documents 200 for workflow_dispatch responses; accept 204 for older-compatible responses.
+    if response.status_code not in (200, 204):
         raise HTTPException(status_code=502, detail="GitHub rejected the workflow dispatch. Check the Actions permission on the API token.")
 
 
