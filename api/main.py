@@ -278,6 +278,15 @@ def _sync_job_status(job: dict[str, Any], run: dict[str, Any] | None) -> dict[st
     }
 
 
+@app.get("/v1/config")
+def public_config():
+    supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    publishable_key = os.getenv("SUPABASE_ANON_KEY", "")
+    if not supabase_url or not publishable_key:
+        raise HTTPException(status_code=503, detail="Public client configuration is not available.")
+    return {"supabase_url": supabase_url, "supabase_publishable_key": publishable_key}
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "yasser-security-lab-api"}
