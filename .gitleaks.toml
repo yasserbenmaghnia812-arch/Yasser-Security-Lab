@@ -1,0 +1,7 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Supabase publishable API keys are intended for browser clients; authorization is enforced by Supabase Auth and RLS."
+regexTarget = "secret"
+regexes = ['''sb_publishable_[A-Za-z0-9_-]+''']
