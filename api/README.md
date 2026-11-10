@@ -8,6 +8,8 @@ Python 3.11+:
 ## Endpoints
 
 - `GET /health` — service health.
+- `GET /v1/config` — public Supabase URL and publishable key only; never returns the service-role key.
+- `POST /v1/assets/register` — registers the fixed source repository after explicit ownership/authorization attestation.
 - `GET /v1/tools` — 27-tool registry and current dispatch configuration.
 - `POST /v1/jobs/plan` — authenticated scope validation; never starts a scan.
 - `POST /v1/jobs/dispatch` — dispatches an approved **static source-analysis** job to GitHub Actions.
