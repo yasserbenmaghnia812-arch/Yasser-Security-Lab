@@ -156,7 +156,7 @@ jobs:
           )
           with urllib.request.urlopen(req, timeout=30) as response:
               release = json.load(response)
-          asset = next((x for x in release["assets"] if re.fullmatch(r"jadx-\\d+\\.\\d+\\.\\d+\\.zip", x["name"])), None)
+          asset = next((x for x in release["assets"] if re.fullmatch(r"jadx-\d+\.\d+\.\d+\.zip", x["name"])), None)
           if not asset:
               raise SystemExit("No standard JADX release ZIP found.")
           urllib.request.urlretrieve(asset["browser_download_url"], os.path.expanduser("~/tools/jadx.zip"))
