@@ -148,3 +148,16 @@ def test_source_asset_registration_requires_explicit_attestation(monkeypatch):
     assert response.status_code == 200
     assert response.json()["asset_id"] == "asset-123456"
     assert response.json()["allowed_tests"] == ["static"]
+
+
+def test_public_config_exposes_only_publishable_supabase_settings(monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "sb_publishable_test_public_key")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "must-never-be-returned")
+    response = client.get("/v1/config")
+    assert response.status_code == 200
+    assert response.json() == {
+        "supabase_url": "https://example.supabase.co",
+        "supabase_publishable_key": "sb_publishable_test_public_key"
+    }
+    assert "must-never-be-returned" not in response.text
