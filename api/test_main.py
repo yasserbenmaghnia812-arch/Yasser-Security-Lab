@@ -57,7 +57,7 @@ def test_static_plan_requires_approved_scope(monkeypatch):
         "asset_id": "asset-123456", "tool_key": "semgrep", "mode": "static"
     })
     assert response.status_code == 200
-    assert response.json()["status"] == "planned"
+    assert response.json()["status"] == "workflow_available"
     assert response.json()["execution_enabled"] is False
 
 
