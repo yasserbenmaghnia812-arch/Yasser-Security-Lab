@@ -5,3 +5,4 @@ useDefault = true
 description = "Supabase publishable API keys are intended for browser clients; authorization is enforced by Supabase Auth and RLS."
 regexTarget = "match"
 regexes = ['''sb_publishable_[A-Za-z0-9_-]{20,}''']
+stopwords = ["sb_publishable_"]
