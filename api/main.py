@@ -51,6 +51,12 @@ class SourceAssetRegistration(BaseModel):
     authorization_note: str = Field(min_length=12, max_length=2000)
 
 
+class AssistantRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    question: str = Field(min_length=5, max_length=4000)
+    context: str = Field(default="", max_length=5000)
+
+
 TOOLS = TOOL_REGISTRY
 
 
@@ -284,7 +290,12 @@ def public_config():
     publishable_key = os.getenv("SUPABASE_ANON_KEY", "")
     if not supabase_url or not publishable_key:
         raise HTTPException(status_code=503, detail="Public client configuration is not available.")
-    return {"supabase_url": supabase_url, "supabase_publishable_key": publishable_key}
+    return {
+        "supabase_url": supabase_url,
+        "supabase_publishable_key": publishable_key,
+        "ai_enabled": bool(os.getenv("OPENROUTER_API_KEY")),
+        "ai_model": os.getenv("OPENROUTER_MODEL", "cohere/north-mini-code:free"),
+    }
 
 
 @app.get("/health")
@@ -391,6 +402,67 @@ def register_source_asset(registration: SourceAssetRegistration, user: dict[str,
         raise
     except httpx.HTTPError:
         raise HTTPException(status_code=503, detail="Could not register the authorized source asset in Supabase.")
+
+
+@app.post("/v1/assistant/review")
+def assistant_review(request: AssistantRequest, user: dict[str, Any] = Depends(current_user)):
+    api_key = os.getenv("OPENROUTER_API_KEY", "")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="AI advisory is not configured. Add OPENROUTER_API_KEY to the Render service.")
+    primary = os.getenv("OPENROUTER_MODEL", "cohere/north-mini-code:free")
+    fallback = os.getenv("OPENROUTER_FALLBACK_MODEL", "nvidia/nemotron-3.5-lightning:free")
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a defensive cybersecurity advisor for an authorized security lab. "
+                "Analyze only the supplied question and context. Do not execute tools, initiate scans, "
+                "change targets, or claim that actions were performed. Require explicit authorization "
+                "for any active testing. Prefer practical remediation, concise Arabic when the user writes "
+                "Arabic, and clearly distinguish evidence from assumptions."
+            ),
+        },
+        {
+            "role": "user",
+            "content": "Question:\\n" + request.question + "\\n\\nContext:\\n" + request.context,
+        },
+    ]
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://yasser-security-lab.vercel.app",
+        "X-Title": "Yasser Security Lab",
+    }
+    failures: list[int] = []
+    for model in dict.fromkeys([primary, fallback]):
+        try:
+            response = httpx.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers=headers,
+                json={"model": model, "messages": messages, "temperature": 0.2, "max_tokens": 1200},
+                timeout=45.0,
+            )
+            if response.status_code != 200:
+                failures.append(response.status_code)
+                continue
+            data = response.json()
+            answer = data["choices"][0]["message"]["content"]
+            if not isinstance(answer, str) or not answer.strip():
+                failures.append(502)
+                continue
+            return {
+                "answer": answer,
+                "provider": "OpenRouter",
+                "model": data.get("model") or model,
+                "fallback_used": model != primary,
+                "execution_enabled": False,
+            }
+        except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError):
+            failures.append(502)
+    raise HTTPException(
+        status_code=502,
+        detail="Both configured free AI models are temporarily unavailable. Retry later.",
+    )
 
 
 @app.post("/v1/jobs/plan")
