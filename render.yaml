@@ -24,3 +24,9 @@ services:
         sync: false
       - key: GITHUB_REPOSITORY
         value: yasserbenmaghnia812-arch/Yasser-Security-Lab
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: cohere/north-mini-code:free
+      - key: OPENROUTER_FALLBACK_MODEL
+        value: nvidia/nemotron-3.5-lightning:free
