@@ -146,9 +146,21 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y apktool unzip curl git build-essential pkg-config libssl-dev liblz4-dev libzip-dev libcapstone-dev
-          python -m pip install --disable-pip-version-check androguard apkleaks
+          python -m pip install --disable-pip-version-check "cryptography>=45.0.7,<47" androguard apkleaks
           mkdir -p "$HOME/tools"
-          curl -fsSL https://github.com/skylot/jadx/releases/latest/download/jadx-1.5.1.zip -o "$HOME/tools/jadx.zip"
+          python - <<'PY'
+          import json, os, re, urllib.request
+          req = urllib.request.Request(
+              "https://api.github.com/repos/skylot/jadx/releases/latest",
+              headers={"Accept": "application/vnd.github+json", "Authorization": "Bearer " + os.environ["GITHUB_TOKEN"]}
+          )
+          with urllib.request.urlopen(req, timeout=30) as response:
+              release = json.load(response)
+          asset = next((x for x in release["assets"] if re.fullmatch(r"jadx-\\d+\\.\\d+\\.\\d+\\.zip", x["name"])), None)
+          if not asset:
+              raise SystemExit("No standard JADX release ZIP found.")
+          urllib.request.urlretrieve(asset["browser_download_url"], os.path.expanduser("~/tools/jadx.zip"))
+          PY
           unzip -q "$HOME/tools/jadx.zip" -d "$HOME/tools/jadx"
           git clone --depth 1 https://github.com/radareorg/radare2 "$HOME/tools/radare2"
           (cd "$HOME/tools/radare2" && sys/install.sh) || echo "radare2 build did not complete; other analyzers will continue"
