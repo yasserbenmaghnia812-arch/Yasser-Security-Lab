@@ -87,7 +87,16 @@ jobs:
           if-no-files-found: warn
 
   apk-static-analysis:
-    if: github.event_name == 'push' || inputs.confirm_owned_files == true
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.confirm_owned_files == true) ||
+      (github.event_name == 'push' && (
+        contains(join(github.event.head_commit.modified, ','), 'app/') ||
+        contains(join(github.event.head_commit.added, ','), 'app/') ||
+        contains(join(github.event.head_commit.modified, ','), 'authorized-samples/') ||
+        contains(join(github.event.head_commit.added, ','), 'authorized-samples/') ||
+        contains(join(github.event.head_commit.removed, ','), 'authorized-samples/') ||
+        contains(join(github.event.head_commit.modified, ','), '.github/workflows/security-static.yml')
+      ))
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
