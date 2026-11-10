@@ -90,15 +90,52 @@ jobs:
           mkdir -p reports
           find authorized-samples -type f -iname '*.apk' -print 2>/dev/null > reports/apk-files.txt || true
           if [ -s reports/apk-files.txt ]; then echo "found=true" >> "$GITHUB_OUTPUT"; else echo "found=false" >> "$GITHUB_OUTPUT"; fi
-      - name: Install APK static-analysis tools
+      - name: Install APK and binary-analysis tools
+        if: steps.samples.outputs.found == 'true'
+        continue-on-error: true
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install APK and binary-analysis packages
         if: steps.samples.outputs.found == 'true'
         run: |
           sudo apt-get update
-          sudo apt-get install -y default-jre apktool
+          sudo apt-get install -y apktool unzip curl git build-essential pkg-config libssl-dev liblz4-dev libzip-dev libcapstone-dev
           python -m pip install --disable-pip-version-check androguard apkleaks
           mkdir -p "$HOME/tools"
           curl -fsSL https://github.com/skylot/jadx/releases/latest/download/jadx-1.5.1.zip -o "$HOME/tools/jadx.zip"
           unzip -q "$HOME/tools/jadx.zip" -d "$HOME/tools/jadx"
+          git clone --depth 1 https://github.com/radareorg/radare2 "$HOME/tools/radare2"
+          (cd "$HOME/tools/radare2" && sys/install.sh) || echo "radare2 build did not complete; other analyzers will continue"
+          python - <<'PY'
+          import json, os, urllib.request
+          req = urllib.request.Request(
+              "https://api.github.com/repos/NationalSecurityAgency/ghidra/releases/latest",
+              headers={"Accept": "application/vnd.github+json", "Authorization": "Bearer " + os.environ["GITHUB_TOKEN"]}
+          )
+          with urllib.request.urlopen(req, timeout=30) as response:
+              release = json.load(response)
+          asset = next((x for x in release["assets"] if x["name"].lower().endswith(".zip") and "public" in x["name"].lower()), None)
+          if not asset:
+              raise SystemExit("No public Ghidra release ZIP found.")
+          urllib.request.urlretrieve(asset["browser_download_url"], os.path.expanduser("~/tools/ghidra.zip"))
+          PY
+          unzip -q "$HOME/tools/ghidra.zip" -d "$HOME/tools/ghidra"
+          GHIDRA_HOME="$(find "$HOME/tools/ghidra" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+          echo "GHIDRA_HOME=$GHIDRA_HOME" >> "$GITHUB_ENV"
+      - name: Start MobSF API-only container
+        if: steps.samples.outputs.found == 'true'
+        run: |
+          key="$(openssl rand -hex 32)"
+          echo "MOBSF_API_KEY=$key" >> "$GITHUB_ENV"
+          docker run -d --name mobsf -p 8000:8000 -e MOBSF_API_KEY="$key" -e MOBSF_API_ONLY=1 opensecurity/mobile-security-framework-mobsf:latest
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8000/ -o /dev/null; then exit 0; fi
+            sleep 5
+          done
+          docker logs mobsf
+          exit 1
       - name: Analyze authorized APK files
         if: steps.samples.outputs.found == 'true'
         shell: bash
@@ -110,6 +147,20 @@ jobs:
             apktool d -f "$apk" -o "reports/$base/resources"
             "$HOME/tools/jadx/bin/jadx" -d "reports/$base/source" "$apk"
             apkleaks -f "$apk" -o "reports/$base/apkleaks.txt"
+            curl -fsS -F "file=@$apk" -H "Authorization: $MOBSF_API_KEY" http://127.0.0.1:8000/api/v1/upload > "reports/$base/mobsf-upload.json"
+            scan_hash="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["hash"])' "reports/$base/mobsf-upload.json")"
+            curl -fsS -X POST --data-urlencode "hash=$scan_hash" -H "Authorization: $MOBSF_API_KEY" http://127.0.0.1:8000/api/v1/scan > "reports/$base/mobsf-scan.json"
+            curl -fsS -X POST --data-urlencode "hash=$scan_hash" -H "Authorization: $MOBSF_API_KEY" http://127.0.0.1:8000/api/v1/report_json > "reports/$base/mobsf-report.json"
+            mkdir -p "reports/$base/native"
+            unzip -oq "$apk" 'lib/*/*.so' -d "reports/$base/native" || true
+            while IFS= read -r native; do
+              [ -n "$native" ] || continue
+              name="$(basename "$native")"
+              if command -v rabin2 >/dev/null 2>&1; then rabin2 -I "$native" > "reports/$base/$name.radare2.txt" 2>&1 || true; fi
+              if [ -x "$GHIDRA_HOME/support/analyzeHeadless" ]; then
+                "$GHIDRA_HOME/support/analyzeHeadless" "reports/$base/ghidra-project" "$name" -import "$native" -max-cpu 2 -analysisTimeoutPerFile 300 > "reports/$base/$name.ghidra.txt" 2>&1 || true
+              fi
+            done < <(find "reports/$base/native" -type f -name '*.so' -print)
             python - "$apk" "reports/$base/androguard.txt" <<'PY'
           import sys
           from androguard.misc import AnalyzeAPK
