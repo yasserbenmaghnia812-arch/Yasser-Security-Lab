@@ -25,6 +25,8 @@ def test_tool_catalog_is_plan_only():
     response = client.get("/v1/tools")
     assert response.status_code == 200
     assert response.json()["integrations_catalogued"] == 27
+    assert response.json()["workflow_enabled"] == 26
+    assert response.json()["api_dispatch_enabled"] is False
     assert response.json()["execution_enabled"] is False
 
 
