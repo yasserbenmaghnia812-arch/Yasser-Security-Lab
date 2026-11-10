@@ -8,25 +8,35 @@ Python 3.11+:
 ## Endpoints
 
 - `GET /health` — service health.
-- `GET /v1/tools` — 27-tool registry with honest workflow availability.
-- `POST /v1/jobs/plan` — authenticated scope validation and plan only.
+- `GET /v1/tools` — 27-tool registry and current dispatch configuration.
+- `POST /v1/jobs/plan` — authenticated scope validation; never starts a scan.
+- `POST /v1/jobs/dispatch` — dispatches an approved **static source-analysis** job to GitHub Actions.
+- `GET /v1/jobs/{job_id}` — returns job state and the matching GitHub Actions run when available.
 
-## Current execution model
+All job endpoints require a valid Supabase access token in the Bearer header. The API checks asset ownership, server-recorded authorization, allowed test mode, and expiry before dispatch.
+
+## Actual dispatch coverage
+
+The API dispatch path is currently restricted to these 8 static tools: Semgrep, Gitleaks, Trivy, Checkov, Syft, Grype, YARA, and ClamAV. It creates an `analysis_jobs` row, dispatches `.github/workflows/security-static.yml` with a correlation ID, writes an audit event, and resolves the GitHub run from its run name when the client polls the job endpoint.
+
+Active network tests are **not** dispatched by this API. They remain behind the separate manual workflow, a single exact public target, an authorization checkbox, and a scope note. The API does not dispatch APK reverse-engineering jobs yet: private APK upload and secure transfer to an isolated runner must be completed first.
+
+## Required Render environment variables
+
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY` (publishable/anon key only)
+- `SUPABASE_SERVICE_ROLE_KEY` (server-side secret; never ship to Android or Vercel browser code)
+- `GITHUB_TOKEN` (fine-grained token with Actions: write for this repository; never ship to the APK)
+- `GITHUB_REPOSITORY` (defaults to this repository)
+- `ALLOWED_ORIGINS` (comma-separated exact web origins; can remain empty for native-only clients)
+
+Do not send secrets in chat or commit them to Git. Add them through Render's Environment page. The GitHub token should be least-privilege and stored only on the server.
+
+## Current tool execution model
 
 - 8 source-analysis tools run in `.github/workflows/security-static.yml`.
-- 7 APK/native-binary analyzers run in that workflow when an authorized APK exists under `authorized-samples/`.
-- 11 low-impact network tools run in `.github/workflows/security-network-approved.yml` only after a manual authorization confirmation, a single exact public target, and a scope note.
+- 7 APK/native-binary analyzers run in that workflow only when an authorized APK exists under `authorized-samples/`.
+- 11 low-impact network tools run in `.github/workflows/security-network-approved.yml` only after manual authorization confirmation and exact target/scope validation.
 - mitmproxy is a local Termux setup documented in `docs/MITMPROXY-TERMUX.md`.
-
-The GitHub Actions workflows are real and separate from the API. The API currently verifies Supabase bearer tokens, checks workspace ownership and asset authorization, and plans jobs; it does **not** dispatch workflows or execute scanners. Do not describe the API as a connected job runner until GitHub dispatch credentials, a durable queue, result callbacks, and audit writes are configured.
-
-## Required production work
-
-- Configure `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` as Render secrets.
-- Add a least-privilege GitHub App or fine-grained token for workflow dispatch; never place it in the APK.
-- Implement signed upload/download URLs for private Supabase Storage.
-- Implement job result callbacks and normalized finding persistence.
-- Deploy an isolated worker with resource, timeout, egress, and output limits.
-- Keep active tests behind server-recorded approvals and exact allowlisted scope.
 
 No scanner accepts arbitrary shell input. Active network workflow excludes exploit, intrusive, and denial-of-service templates and uses bounded request rates.
