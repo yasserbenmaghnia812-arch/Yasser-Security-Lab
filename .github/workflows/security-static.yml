@@ -40,15 +40,11 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
       - name: Trivy filesystem scan
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          format: json
-          output: trivy.json
-          severity: HIGH,CRITICAL
-          exit-code: "0"
+        run: trivy fs --format json --output trivy.json --severity HIGH,CRITICAL --exit-code 0 .
       - name: Install Syft and Grype
         uses: anchore/sbom-action/download-syft@v0
       - name: Generate SBOM
