@@ -86,6 +86,7 @@ jobs:
   apk-static-analysis:
     if: github.event_name == 'push' || inputs.confirm_owned_files == true
     runs-on: ubuntu-latest
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
       - name: Find authorized APK samples
@@ -94,7 +95,40 @@ jobs:
         run: |
           mkdir -p reports
           find authorized-samples -type f -iname '*.apk' -print 2>/dev/null > reports/apk-files.txt || true
-          if [ -s reports/apk-files.txt ]; then echo "found=true" >> "$GITHUB_OUTPUT"; else echo "found=false" >> "$GITHUB_OUTPUT"; fi
+          if [ -s reports/apk-files.txt ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "build_self=false" >> "$GITHUB_OUTPUT"
+          elif [ -f app/build.gradle.kts ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "build_self=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "build_self=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Set up Java for project APK build
+        if: steps.samples.outputs.build_self == 'true'
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Gradle for project APK build
+        if: steps.samples.outputs.build_self == 'true'
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Set up Android SDK for project APK build
+        if: steps.samples.outputs.build_self == 'true'
+        uses: android-actions/setup-android@v3
+        with:
+          accept-android-sdk-licenses: true
+          packages: platform-tools
+      - name: Build this repository APK as an authorized analysis sample
+        if: steps.samples.outputs.build_self == 'true'
+        shell: bash
+        run: |
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+          gradle --no-daemon :app:assembleDebug
+          echo "app/build/outputs/apk/debug/app-debug.apk" >> reports/apk-files.txt
       - name: Install APK and binary-analysis tools
         if: steps.samples.outputs.found == 'true'
         continue-on-error: true
