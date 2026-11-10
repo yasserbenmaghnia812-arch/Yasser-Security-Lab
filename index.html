@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#171717">
+<title>Yasser Security Lab</title>
+<style>
+:root{color-scheme:dark;--bg:#101010;--panel:#1a1a1a;--line:#303030;--text:#f4f1ed;--muted:#aaa39c;--red:#e34b4b;--green:#4ade80}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 85% 0,#321b1b 0,transparent 35%),var(--bg);color:var(--text);font:16px system-ui,-apple-system,"Segoe UI",sans-serif;min-height:100vh}
+main{max-width:820px;margin:auto;padding:28px 18px 56px}.top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:24px}.brand{display:flex;align-items:center;gap:12px}.mark{background:var(--red);border-radius:14px;padding:12px 15px;font-weight:900}.sub{color:var(--muted);font-size:13px}.card{background:linear-gradient(145deg,#202020,#171717);border:1px solid var(--line);border-radius:18px;padding:20px;margin:14px 0;box-shadow:0 12px 30px #0003}h1{font-size:24px;margin:0 0 4px}h2{font-size:18px;margin:0 0 14px}p{color:var(--muted);line-height:1.65;margin:8px 0 0}
+label{display:block;font-size:13px;color:#d7d2cc;margin:12px 0 6px}input,textarea,select{width:100%;background:#101010;color:var(--text);border:1px solid #414141;border-radius:10px;padding:12px;font:inherit;outline:none}input:focus,textarea:focus{border-color:var(--red)}textarea{min-height:86px;resize:vertical}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}button{border:0;border-radius:11px;padding:12px 16px;background:var(--red);color:white;font-weight:700;font:inherit;cursor:pointer}button.secondary{background:#303030}button:disabled{opacity:.5;cursor:not-allowed}.check{display:flex;gap:10px;align-items:flex-start;color:var(--muted);font-size:13px;margin-top:14px}.check input{width:auto;margin-top:4px}.status{white-space:pre-wrap;background:#101010;border:1px solid var(--line);border-radius:12px;padding:12px;color:#ddd;font-size:13px;overflow-wrap:anywhere}.hidden{display:none}.pill{display:inline-block;border:1px solid #5c3434;color:#ffb0b0;border-radius:99px;padding:4px 9px;font-size:11px}.good{color:var(--green)}a{color:#ff9999}.foot{font-size:12px;color:#8e8881;text-align:center;margin-top:24px}@media(max-width:600px){.grid{grid-template-columns:1fr}.top{align-items:flex-start}}
+</style>
+</head>
+<body>
+<main>
+<header class="top">
+ <div class="brand"><div class="mark">YSL</div><div><h1>مختبر ياسر الأمني</h1><div class="sub">لوحة تشغيل الفحوصات المصرح بها</div></div></div>
+ <span class="pill">Static scans</span>
+</header>
+<section class="card">
+ <h2>الاتصال بالخدمة</h2>
+ <label for="api">عنوان API على Render</label>
+ <input id="api" value="https://yasser-security-lab-api-qshl.onrender.com" dir="ltr">
+ <p>يتم إرسال رمز جلسة Supabase إلى API فقط. لا تضع مفاتيح الخدمة أو GitHub Tokens هنا.</p>
+</section>
+<section class="card" id="authCard">
+ <h2>تسجيل الدخول</h2>
+ <div class="grid">
+  <div><label for="email">البريد الإلكتروني</label><input id="email" type="email" autocomplete="email" dir="ltr"></div>
+  <div><label for="password">كلمة المرور</label><input id="password" type="password" autocomplete="current-password" dir="ltr"></div>
+ </div>
+ <div class="actions"><button id="login">دخول</button><button class="secondary" id="signup">إنشاء حساب</button></div>
+ <div class="sub" id="authMsg" aria-live="polite"></div>
+</section>
+<section class="card hidden" id="scanCard">
+ <div class="top"><h2>فحص مستودع المصدر</h2><button class="secondary" id="logout">تسجيل الخروج</button></div>
+ <p>هذا الإصدار يرسل فحوصات ثابتة للمستودع المرتبط فقط. لا يشغّل فحص شبكات أو استغلالاً نشطاً.</p>
+ <label class="check"><input id="authorized" type="checkbox"><span>أؤكد أنني مالك المستودع أو لدي إذن مكتوب لتحليل ملفاته.</span></label>
+ <label for="scope">ملاحظة التفويض والنطاق</label>
+ <textarea id="scope" placeholder="مثال: أملك مستودع Yasser-Security-Lab وأصرّح بفحص الكود والاعتماديات داخله."></textarea>
+ <div class="actions"><button id="run">تأكيد النطاق وتشغيل الفحص</button><button class="secondary" id="refresh">تحديث حالة آخر مهمة</button></div>
+ <div class="status" id="result" aria-live="polite">لم يتم تشغيل أي مهمة بعد.</div>
+</section>
+<footer class="foot">المفتاح العام فقط مضمّن في واجهة المتصفح. مفاتيح الخدمة تبقى على الخادم.</footer>
+</main>
+<script>
+const SUPABASE_URL="https://jokemrlulcvoiahfnagz.supabase.co";
+const SUPABASE_KEY="sb_publishable_2mydKfQGvTbpzop2JJs_Jw_gnTr2JZK";
+const $=id=>document.getElementById(id);
+let accessToken=sessionStorage.getItem("ysl_access_token")||"";
+let currentAsset=sessionStorage.getItem("ysl_asset_id")||"";
+let currentJob=sessionStorage.getItem("ysl_job_id")||"";
+const api=()=> $("api").value.trim().replace(/\/+$/,"");
+function message(id,text){$(id).textContent=text}
+function headers(){return {"apikey":SUPABASE_KEY,"Content-Type":"application/json"}}
+function apiHeaders(){return {"Authorization":"Bearer "+accessToken,"Content-Type":"application/json"}}
+function setSignedIn(ok){$("authCard").classList.toggle("hidden",ok);$("scanCard").classList.toggle("hidden",!ok)}
+async function auth(path,body){const r=await fetch(SUPABASE_URL+"/auth/v1/"+path,{method:"POST",headers:headers(),body:JSON.stringify(body)});const data=await r.json();if(!r.ok)throw new Error(data.msg||data.message||data.error_description||"تعذر تسجيل الدخول");return data}
+async function signIn(create){try{message("authMsg","جارٍ الاتصال...");const email=$("email").value.trim(),password=$("password").value;if(!email||!password)throw new Error("أدخل البريد وكلمة المرور.");const data=await auth(create?"signup":"token?grant_type=password",{email,password});if(!data.access_token){message("authMsg","تم إنشاء الحساب. إذا كان تأكيد البريد مفعلاً، أكّد بريدك ثم سجّل الدخول.");return}accessToken=data.access_token;sessionStorage.setItem("ysl_access_token",accessToken);setSignedIn(true);message("authMsg","تم تسجيل الدخول.");}catch(e){message("authMsg",e.message)}}
+async function request(path,body){const r=await fetch(api()+path,{method:"POST",headers:apiHeaders(),body:JSON.stringify(body)});const data=await r.json().catch(()=>({detail:"استجابة غير مفهومة من API"}));if(!r.ok)throw new Error(data.detail||"فشل الطلب");return data}
+async function run(){try{if(!$("authorized").checked)throw new Error("يجب تأكيد ملكية المستودع أو الإذن المكتوب.");const note=$("scope").value.trim();if(note.length<12)throw new Error("أدخل ملاحظة تفويض واضحة (12 حرفاً على الأقل).");$("run").disabled=true;message("result","تسجيل النطاق المصرح به...");const asset=await request("/v1/assets/register",{authorization_confirmed:true,authorization_note:note});currentAsset=asset.asset_id;sessionStorage.setItem("ysl_asset_id",currentAsset);message("result","تم تسجيل النطاق. جارٍ إرسال مهمة Semgrep إلى GitHub Actions...");const job=await request("/v1/jobs/dispatch",{asset_id:currentAsset,tool_key:"semgrep",mode:"static"});currentJob=job.job_id;sessionStorage.setItem("ysl_job_id",currentJob);message("result","تم قبول المهمة. رقم المهمة: "+currentJob+"\nالحالة: "+job.status+"\nاضغط تحديث حالة آخر مهمة بعد قليل.");}catch(e){message("result","خطأ: "+e.message)}finally{$("run").disabled=false}}
+async function refresh(){try{if(!currentJob)throw new Error("لا توجد مهمة محفوظة في هذه الجلسة.");const r=await fetch(api()+"/v1/jobs/"+encodeURIComponent(currentJob),{headers:apiHeaders()});const data=await r.json();if(!r.ok)throw new Error(data.detail||"تعذر جلب الحالة");let text="المهمة: "+data.id+"\nالحالة: "+data.status;if(data.github_run){text+="\nGitHub: "+data.github_run.status+" / "+(data.github_run.conclusion||"قيد التنفيذ");if(data.github_run.url)text+="\nرابط التشغيل: "+data.github_run.url}message("result",text)}catch(e){message("result","خطأ: "+e.message)}}
+$("login").onclick=()=>signIn(false);$("signup").onclick=()=>signIn(true);$("logout").onclick=()=>{accessToken="";currentAsset="";currentJob="";sessionStorage.clear();setSignedIn(false)};$("run").onclick=run;$("refresh").onclick=refresh;
+setSignedIn(!!accessToken);
+</script>
+</body>
+</html>
