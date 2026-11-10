@@ -267,13 +267,13 @@ def test_dispatch_accepts_documented_github_success_codes(monkeypatch, status_co
     assert calls[0][1]["inputs"]["job_id"] == "job-12345678"
 
 
-def test_only_executed_source_scanners_are_advertised_as_api_enabled():
+def test_only_verified_source_and_apk_scanners_are_advertised_as_api_enabled():
     response = client.get("/v1/tools")
     tools = response.json()["tools"]
     enabled = {key for key, item in tools.items() if item["workflow_enabled"]}
-    assert enabled == {"semgrep", "gitleaks", "trivy", "checkov", "grype", "syft", "yara", "clamav"}
+    assert enabled == {"semgrep", "gitleaks", "trivy", "checkov", "grype", "syft", "yara", "clamav", "mobsf", "jadx", "apktool"}
     assert tools["nmap"]["execution_available"] is False
-    assert tools["mobsf"]["execution_available"] is False
+    assert tools["mobsf"]["execution_available"] is True
 
 
 def test_apk_upload_requires_valid_filename_and_authorization(monkeypatch):
