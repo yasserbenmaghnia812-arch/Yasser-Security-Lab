@@ -99,6 +99,8 @@ jobs:
           java-version: '21'
       - name: Install APK and binary-analysis packages
         if: steps.samples.outputs.found == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           sudo apt-get update
           sudo apt-get install -y apktool unzip curl git build-essential pkg-config libssl-dev liblz4-dev libzip-dev libcapstone-dev
@@ -131,7 +133,7 @@ jobs:
           echo "MOBSF_API_KEY=$key" >> "$GITHUB_ENV"
           docker run -d --name mobsf -p 8000:8000 -e MOBSF_API_KEY="$key" -e MOBSF_API_ONLY=1 opensecurity/mobile-security-framework-mobsf:latest
           for attempt in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:8000/ -o /dev/null; then exit 0; fi
+            if curl -fsS -H "Authorization: $key" http://127.0.0.1:8000/api/v1/scans -o /dev/null; then exit 0; fi
             sleep 5
           done
           docker logs mobsf
