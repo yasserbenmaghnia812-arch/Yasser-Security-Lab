@@ -75,3 +75,37 @@ def test_active_job_never_starts_from_plan_endpoint(monkeypatch):
     assert response.status_code == 200
     assert response.json()["status"] == "approval_required"
     assert response.json()["plan_only"] is True
+
+
+def test_static_dispatch_creates_and_dispatches_job(monkeypatch):
+    authenticated_user()
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    monkeypatch.setattr(main, "load_authorized_asset", lambda *_: {
+        "id": "asset-123456", "workspace_id": "workspace-123",
+        "asset_type": "source", "identifier": "yasser-security-lab",
+        "authorization_confirmed": True, "allowed_tests": ["static"], "expires_at": None
+    })
+    monkeypatch.setattr(main, "_insert_job", lambda *_: {"id": "job-12345678"})
+    dispatched = []
+    monkeypatch.setattr(main, "_dispatch_static", lambda job_id: dispatched.append(job_id))
+    monkeypatch.setattr(main, "_audit", lambda *_: None)
+    response = client.post("/v1/jobs/dispatch", json={
+        "asset_id": "asset-123456", "tool_key": "semgrep", "mode": "static"
+    })
+    assert response.status_code == 200
+    assert response.json()["status"] == "queued"
+    assert dispatched == ["job-12345678"]
+
+
+def test_api_does_not_dispatch_active_or_apk_jobs(monkeypatch):
+    authenticated_user()
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    monkeypatch.setattr(main, "load_authorized_asset", lambda *_: {
+        "id": "asset-123456", "workspace_id": "workspace-123",
+        "asset_type": "apk", "identifier": "sample.apk",
+        "authorization_confirmed": True, "allowed_tests": ["active", "reverse_engineering"], "expires_at": None
+    })
+    response = client.post("/v1/jobs/dispatch", json={
+        "asset_id": "asset-123456", "tool_key": "nmap", "mode": "active"
+    })
+    assert response.status_code == 403
