@@ -1,6 +1,7 @@
 package com.yasser.securitylab
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
@@ -26,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.IOException
@@ -138,6 +140,26 @@ fun SecurityLabApp() {
             message = "اتصال API جاهز. سجّل الدخول للبدء."
         } catch (e: Exception) {
             message = "تعذر الاتصال بـ API: ${e.message}"
+        }
+    }
+
+    LaunchedEffect(jobId, accessToken) {
+        val token = accessToken
+        if (jobId.isNotBlank() && token != null) {
+            while (true) {
+                delay(10000)
+                try {
+                    val status = withContext(Dispatchers.IO) { Api.job(token, jobId) }
+                    jobStatus = status.optString("status", "unknown")
+                    reportUrl = status.optJSONObject("github_run")?.optString("url").orEmpty()
+                    if (jobStatus == "succeeded" || jobStatus == "failed") {
+                        message = if (jobStatus == "succeeded") "اكتمل التحليل. التقارير متاحة في GitHub Actions." else "فشل التحليل. افتح سجل التشغيل لمعرفة الخطأ."
+                        break
+                    }
+                } catch (_: Exception) {
+                    // Retry on the next interval without losing the current status.
+                }
+            }
         }
     }
 
@@ -259,7 +281,11 @@ fun SecurityLabApp() {
                                     }
                                 }, modifier = Modifier.fillMaxWidth()) { Text("تحديث حالة المهمة") }
                                 if (reportUrl.isNotBlank()) {
-                                    Text("رابط سجل التشغيل: $reportUrl", fontSize = 11.sp, color = Muted)
+                                    OutlinedButton(onClick = {
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(reportUrl)))
+                                    }, modifier = Modifier.fillMaxWidth()) {
+                                        Text("فتح التقارير في GitHub Actions")
+                                    }
                                 }
                             }
                         }
