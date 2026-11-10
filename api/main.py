@@ -44,6 +44,13 @@ class JobPlan(BaseModel):
     parameters: dict[str, Any] = Field(default_factory=dict)
 
 
+class SourceAssetRegistration(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    workspace_name: str = Field(default="Yasser Security Lab", min_length=1, max_length=100)
+    authorization_confirmed: bool
+    authorization_note: str = Field(min_length=12, max_length=2000)
+
+
 TOOLS = TOOL_REGISTRY
 
 
@@ -290,6 +297,91 @@ def list_tools():
         "dispatch_modes": ["static"] if dispatch_configured else [],
         "note": "API dispatch is restricted to approved static source scans. Active network testing and APK reverse engineering require separate workflows and scope checks.",
     }
+
+
+@app.post("/v1/assets/register")
+def register_source_asset(registration: SourceAssetRegistration, user: dict[str, Any] = Depends(current_user)):
+    if registration.authorization_confirmed is not True:
+        raise HTTPException(status_code=403, detail="Explicit authorization confirmation is required.")
+    url, _, service_key = _config()
+    headers = _service_headers(service_key)
+    try:
+        workspaces_response = httpx.get(
+            f"{url}/rest/v1/workspaces",
+            params={"owner_id": f"eq.{user['id']}", "select": "id", "limit": "1"},
+            headers=headers,
+            timeout=10.0,
+        )
+        workspaces_response.raise_for_status()
+        workspaces = workspaces_response.json()
+        if workspaces:
+            workspace_id = workspaces[0]["id"]
+        else:
+            created = httpx.post(
+                f"{url}/rest/v1/workspaces",
+                json={"owner_id": user["id"], "name": registration.workspace_name},
+                headers=_service_headers(service_key, "return=representation"),
+                timeout=10.0,
+            )
+            created.raise_for_status()
+            workspace_id = created.json()[0]["id"]
+
+        asset_query = {
+            "workspace_id": f"eq.{workspace_id}",
+            "asset_type": "eq.source",
+            "identifier": f"eq.{REPOSITORY}",
+            "select": "id",
+            "limit": "1",
+        }
+        existing_response = httpx.get(
+            f"{url}/rest/v1/assets",
+            params=asset_query,
+            headers=headers,
+            timeout=10.0,
+        )
+        existing_response.raise_for_status()
+        existing = existing_response.json()
+        payload = {
+            "workspace_id": workspace_id,
+            "created_by": user["id"],
+            "asset_type": "source",
+            "identifier": REPOSITORY,
+            "authorization_confirmed": True,
+            "authorization_note": registration.authorization_note,
+            "allowed_tests": ["static"],
+            "expires_at": (datetime.now(timezone.utc) + __import__("datetime").timedelta(days=30)).isoformat(),
+        }
+        if existing:
+            asset_id = existing[0]["id"]
+            updated = httpx.patch(
+                f"{url}/rest/v1/assets",
+                params={"id": f"eq.{asset_id}"},
+                json={key: value for key, value in payload.items() if key not in {"workspace_id", "created_by", "asset_type", "identifier"}},
+                headers=_service_headers(service_key, "return=representation"),
+                timeout=10.0,
+            )
+            updated.raise_for_status()
+        else:
+            created_asset = httpx.post(
+                f"{url}/rest/v1/assets",
+                json=payload,
+                headers=_service_headers(service_key, "return=representation"),
+                timeout=10.0,
+            )
+            created_asset.raise_for_status()
+            asset_id = created_asset.json()[0]["id"]
+        return {
+            "asset_id": asset_id,
+            "workspace_id": workspace_id,
+            "asset_type": "source",
+            "identifier": REPOSITORY,
+            "allowed_tests": ["static"],
+            "expires_in_days": 30,
+        }
+    except HTTPException:
+        raise
+    except httpx.HTTPError:
+        raise HTTPException(status_code=503, detail="Could not register the authorized source asset in Supabase.")
 
 
 @app.post("/v1/jobs/plan")
