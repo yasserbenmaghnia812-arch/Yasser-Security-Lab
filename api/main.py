@@ -1,8 +1,8 @@
+import logging
 import os
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
-from urllib.parse import quote
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException
