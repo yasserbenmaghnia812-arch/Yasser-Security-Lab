@@ -1,6 +1,6 @@
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
 
@@ -349,7 +349,7 @@ def register_source_asset(registration: SourceAssetRegistration, user: dict[str,
             "authorization_confirmed": True,
             "authorization_note": registration.authorization_note,
             "allowed_tests": ["static"],
-            "expires_at": (datetime.now(timezone.utc) + __import__("datetime").timedelta(days=30)).isoformat(),
+            "expires_at": (datetime.now(timezone.utc) + timedelta(days=30)).isoformat(),
         }
         if existing:
             asset_id = existing[0]["id"]
