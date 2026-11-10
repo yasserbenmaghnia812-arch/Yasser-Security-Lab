@@ -1,5 +1,7 @@
 package com.yasser.securitylab
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -13,6 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -33,6 +36,10 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun SecurityLabApp() {
+    val context = LocalContext.current
+    fun open(url: String) {
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+    }
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
         MaterialTheme(
             colorScheme = lightColorScheme(
@@ -43,12 +50,12 @@ fun SecurityLabApp() {
             Column(
                 modifier = Modifier.fillMaxSize().background(Paper)
                     .verticalScroll(rememberScrollState()).padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("مختبر ياسر الأمني", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Ink)
-                        Text("تحليل أمني مصرح به • لوحة التحكم", color = Muted, fontSize = 12.sp)
+                        Text("منصة تحليل أمني مصرح به", color = Muted, fontSize = 12.sp)
                     }
                     Surface(color = Red, shape = RoundedCornerShape(14.dp)) {
                         Text("YSL", color = Color.White, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp), fontWeight = FontWeight.Bold)
@@ -56,32 +63,46 @@ fun SecurityLabApp() {
                 }
                 Card(colors = CardDefaults.cardColors(containerColor = Ink), shape = RoundedCornerShape(20.dp)) {
                     Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("مركز التحليل", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                        Text("أدر أصولك، شغّل الفحوصات المصرح بها، وراجع الأدلة والتقارير.", color = Color(0xFFE4E0DA))
-                        Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = Red)) {
-                            Text("إضافة أصل مصرح به")
+                        Text("مركز الفحص", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                        Text("23 أداة موصولة بسير عمل GitHub Actions. الفحوصات النشطة تتطلب تأكيد الإذن وتحديد هدف واحد.", color = Color(0xFFE4E0DA))
+                        Button(onClick = { open("https://github.com/yasserbenmaghnia812-arch/Yasser-Security-Lab/actions/workflows/security-static.yml") },
+                            colors = ButtonDefaults.buttonColors(containerColor = Red), modifier = Modifier.fillMaxWidth()) {
+                            Text("تشغيل فحص الكود والملفات")
+                        }
+                        OutlinedButton(onClick = { open("https://github.com/yasserbenmaghnia812-arch/Yasser-Security-Lab/actions/workflows/security-network-approved.yml") },
+                            modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)) {
+                            Text("فحص شبكة مصرح به")
                         }
                     }
                 }
-                Text("الأقسام", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                SectionCard("فحص الأصول", "نطاقات IP ومواقع تملكها أو لديك إذن بفحصها")
-                SectionCard("تحليل APK", "تحليل ثابت، مكونات التطبيق، الأذونات والمؤشرات")
-                SectionCard("الهندسة العكسية", "فحص الملفات الثنائية والتبعيات بشكل آمن")
-                SectionCard("الدردشة الذكية", "مساعدان لتحليل النتائج واقتراح الإصلاحات")
-                SectionCard("التقارير", "الأدلة، الخطورة، الثقة، والتوصيات")
-                SectionCard("الإعدادات", "الخادم، النماذج، الخصوصية، وسجل الموافقات")
-                Text("الإصدار التمهيدي 0.1.0 — التنفيذ السحابي غير مربوط بعد", color = Muted, fontSize = 11.sp)
+                Text("الأدوات المرتبطة", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                ToolGroup("تحليل الكود والاعتماديات", "Semgrep • Gitleaks • Trivy • Checkov • Syft • Grype • YARA • ClamAV", "متاح عبر GitHub Actions")
+                ToolGroup("تحليل تطبيقات Android", "JADX • Apktool • Androguard • APKLeaks", "ضع APK المصرح به داخل authorized-samples/")
+                ToolGroup("الشبكات والويب", "Nmap • ZAP • Nuclei • httpx • Subfinder • Amass • dnsx • Katana • Naabu • testssl.sh • Nikto", "تشغيل يدوي مع تأكيد الإذن")
+                Text("قيد الدمج", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                ToolGroup("أدوات إضافية", "MobSF • Ghidra • radare2 • mitmproxy", "لم تُفعّل بعد")
+                Text("النتائج والتقارير", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Button(onClick = { open("https://github.com/yasserbenmaghnia812-arch/Yasser-Security-Lab/actions") },
+                    modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Ink)) {
+                    Text("عرض سجلات الفحص والتقارير")
+                }
+                OutlinedButton(onClick = { open("https://github.com/yasserbenmaghnia812-arch/Yasser-Security-Lab") },
+                    modifier = Modifier.fillMaxWidth()) {
+                    Text("المستودع والإعدادات")
+                }
+                Text("تنبيه: التطبيق يفتح سير العمل السحابي؛ الربط المباشر بين API والتطبيق لم يكتمل بعد.", color = Muted, fontSize = 11.sp)
             }
         }
     }
 }
 
 @Composable
-private fun SectionCard(title: String, subtitle: String) {
+private fun ToolGroup(title: String, tools: String, status: String) {
     Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(16.dp)) {
-        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(title, fontWeight = FontWeight.Bold, color = Ink)
-            Text(subtitle, color = Muted, fontSize = 12.sp)
+            Text(tools, color = Ink, fontSize = 12.sp)
+            Text(status, color = Red, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }
