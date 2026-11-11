@@ -77,6 +77,14 @@ def test_active_job_never_starts_from_plan_endpoint(monkeypatch):
     assert response.json()["plan_only"] is True
 
 
+def test_static_dispatch_requires_explicit_per_job_approval(monkeypatch):
+    authenticated_user()
+    response = client.post("/v1/jobs/dispatch", json={
+        "asset_id": "asset-123456", "tool_key": "semgrep", "mode": "static"
+    })
+    assert response.status_code == 403
+
+
 def test_static_dispatch_creates_and_dispatches_job(monkeypatch):
     authenticated_user()
     monkeypatch.setenv("GITHUB_TOKEN", "test-token")
@@ -90,7 +98,7 @@ def test_static_dispatch_creates_and_dispatches_job(monkeypatch):
     monkeypatch.setattr(main, "_dispatch_static", lambda job_id: dispatched.append(job_id))
     monkeypatch.setattr(main, "_audit", lambda *_: None)
     response = client.post("/v1/jobs/dispatch", json={
-        "asset_id": "asset-123456", "tool_key": "semgrep", "mode": "static"
+        "asset_id": "asset-123456", "tool_key": "semgrep", "mode": "static", "user_approved": True
     })
     assert response.status_code == 200
     assert response.json()["status"] == "queued"
