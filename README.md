@@ -9,7 +9,7 @@ Arabic-first, permission-first Android security workbench. The repository contai
 - Android client: Kotlin, Jetpack Compose, Arabic RTL login and APK upload/status UI.
 - Per-operation authorization: the user attests repository ownership, confirms each static scan separately, and confirms every APK upload. The API enforces per-scan and per-upload confirmation server-side.
 - APK workflow: private Supabase Storage upload, short-lived signed URL, isolated GitHub Actions runner, Apktool/JADX decompilation and MobSF static scan.
-- Static source workflow: 8 source-analysis tools (Semgrep, Gitleaks, Trivy, Checkov, Syft, Grype, YARA, ClamAV).
+- Static source workflow: one explicit full-suite action that runs all 8 source-analysis tools (Semgrep, Gitleaks, Trivy, Checkov, Syft, Grype, YARA, ClamAV).
 - API: FastAPI with Supabase Auth, tenant-owned workspaces, server-side asset authorization, audit events, and an advisory-only OpenRouter endpoint.
 - Local chat panel: loopback-only OpenAI-compatible inference endpoint. It does **not** bundle a model runtime, start a local inference server, or connect directly to LocalMind; a separate local server/bridge is required.
 
