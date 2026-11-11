@@ -32,7 +32,7 @@ def test_tool_catalog_is_plan_only():
 
 def test_job_requires_supabase_auth():
     response = client.post("/v1/jobs/plan", json={
-        "asset_id": "asset-123456", "tool_key": "semgrep", "mode": "static"
+        "asset_id": "asset-123456", "tool_key": "full-static-suite", "mode": "static"
     })
     assert response.status_code == 401
 
@@ -44,7 +44,7 @@ def test_asset_must_be_server_verified(monkeypatch):
         "allowed_tests": ["passive"], "expires_at": None
     })
     response = client.post("/v1/jobs/plan", json={
-        "asset_id": "asset-123456", "tool_key": "semgrep", "mode": "static"
+        "asset_id": "asset-123456", "tool_key": "full-static-suite", "mode": "static"
     })
     assert response.status_code == 403
 
@@ -56,7 +56,7 @@ def test_static_plan_requires_approved_scope(monkeypatch):
         "allowed_tests": ["static"], "expires_at": None
     })
     response = client.post("/v1/jobs/plan", json={
-        "asset_id": "asset-123456", "tool_key": "semgrep", "mode": "static"
+        "asset_id": "asset-123456", "tool_key": "full-static-suite", "mode": "static"
     })
     assert response.status_code == 200
     assert response.json()["status"] == "workflow_available"
@@ -80,7 +80,7 @@ def test_active_job_never_starts_from_plan_endpoint(monkeypatch):
 def test_static_dispatch_requires_explicit_per_job_approval(monkeypatch):
     authenticated_user()
     response = client.post("/v1/jobs/dispatch", json={
-        "asset_id": "asset-123456", "tool_key": "semgrep", "mode": "static"
+        "asset_id": "asset-123456", "tool_key": "full-static-suite", "mode": "static"
     })
     assert response.status_code == 403
 
@@ -98,7 +98,7 @@ def test_static_dispatch_creates_and_dispatches_job(monkeypatch):
     monkeypatch.setattr(main, "_dispatch_static", lambda job_id: dispatched.append(job_id))
     monkeypatch.setattr(main, "_audit", lambda *_: None)
     response = client.post("/v1/jobs/dispatch", json={
-        "asset_id": "asset-123456", "tool_key": "semgrep", "mode": "static", "user_approved": True
+        "asset_id": "asset-123456", "tool_key": "full-static-suite", "mode": "static", "user_approved": True
     })
     assert response.status_code == 200
     assert response.json()["status"] == "queued"
