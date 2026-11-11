@@ -46,6 +46,7 @@ class JobPlan(BaseModel):
     tool_key: str = Field(min_length=2, max_length=40)
     mode: Mode
     parameters: dict[str, Any] = Field(default_factory=dict)
+    user_approved: bool = False
 
 
 class SourceAssetRegistration(BaseModel):
@@ -161,6 +162,8 @@ def _insert_job(job: JobPlan, asset: dict[str, Any], user_id: str) -> dict[str, 
         "tool_key": job.tool_key,
         "mode": job.mode.value,
         "status": "queued",
+        "approved_at": datetime.now(timezone.utc).isoformat() if job.user_approved else None,
+        "approved_by": user_id if job.user_approved else None,
         "parameters": job.parameters,
     }
     try:
@@ -598,6 +601,8 @@ def dispatch_job(job: JobPlan, user: dict[str, Any] = Depends(current_user)):
         raise HTTPException(status_code=403, detail="The API currently dispatches static source-analysis tools only.")
     if job.tool_key not in TOOLS or TOOLS[job.tool_key]["mode"] != "static":
         raise HTTPException(status_code=400, detail="Tool and mode do not match.")
+    if job.user_approved is not True:
+        raise HTTPException(status_code=403, detail="Explicit per-job approval is required before dispatch.")
     asset = load_authorized_asset(job.asset_id, user["id"])
     _assert_asset_authorized(asset, job.mode)
     if asset.get("asset_type") != "source":
