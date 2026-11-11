@@ -407,7 +407,6 @@ fun SecurityLabApp() {
                 }
 
                 LocalAiChatPanel()
-                ReplicaMcpPanel()
 
                 if (accessToken == null) {
                     Card(shape = RoundedCornerShape(18.dp)) {
@@ -454,6 +453,7 @@ fun SecurityLabApp() {
                     )
                     AssistantReviewPanel(accessToken = accessToken!!, enabled = aiEnabled)
                     AgentTaskPanel(accessToken = accessToken!!)
+                    ReplicaMcpPanel(accessToken = accessToken!!)
 
                     Card(shape = RoundedCornerShape(18.dp)) {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
