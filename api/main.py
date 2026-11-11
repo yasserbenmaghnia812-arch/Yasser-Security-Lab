@@ -63,6 +63,22 @@ class AssistantRequest(BaseModel):
     context: str = Field(default="", max_length=5000)
 
 
+class AgentTaskType(str, Enum):
+    api_tests = "api_tests"
+    android_debug_apk = "android_debug_apk"
+
+
+class AgentTaskPlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    task_type: AgentTaskType
+
+
+class AgentTaskExecutionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    task_type: AgentTaskType
+    user_approved: bool = False
+
+
 TOOLS = TOOL_REGISTRY
 
 
@@ -332,6 +348,73 @@ def public_config():
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "yasser-security-lab-api"}
+
+
+AGENT_TASKS = {
+    AgentTaskType.api_tests: {
+        "title": "تشغيل اختبارات API",
+        "steps": ["تثبيت متطلبات Python", "تشغيل pytest -q داخل api/", "حفظ سجل GitHub Actions"],
+    },
+    AgentTaskType.android_debug_apk: {
+        "title": "بناء APK تجريبي",
+        "steps": ["إعداد Java 17 وAndroid SDK", "تشغيل Gradle assembleDebug", "رفع APK كـ GitHub Actions artifact"],
+    },
+}
+
+
+@app.post("/v1/agent/plan")
+def plan_agent_task(request: AgentTaskPlanRequest, user: dict[str, Any] = Depends(current_user)):
+    task = AGENT_TASKS[request.task_type]
+    return {
+        "task_type": request.task_type.value,
+        "title": task["title"],
+        "steps": task["steps"],
+        "requires_approval": True,
+        "execution_enabled": False,
+        "message": "هذه معاينة فقط. لن يبدأ أي تشغيل حتى ترسل طلب التنفيذ مع user_approved=true.",
+    }
+
+
+@app.post("/v1/agent/execute")
+def execute_agent_task(request: AgentTaskExecutionRequest, user: dict[str, Any] = Depends(current_user)):
+    if request.user_approved is not True:
+        raise HTTPException(status_code=403, detail="Explicit per-task approval is required.")
+    token = os.getenv("GITHUB_TOKEN", "")
+    if not token:
+        raise HTTPException(status_code=503, detail="GitHub Actions dispatch is not configured on the API service.")
+    request_id = __import__("uuid").uuid4().hex
+    endpoint = f"https://api.github.com/repos/{REPOSITORY}/actions/workflows/agent-approved-task.yml/dispatches"
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {token}",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    try:
+        response = httpx.post(
+            endpoint,
+            headers=headers,
+            json={
+                "ref": os.getenv("AGENT_WORKFLOW_REF", "main"),
+                "inputs": {
+                    "task_type": request.task_type.value,
+                    "approval_confirmed": "true",
+                    "request_id": request_id,
+                },
+            },
+            timeout=20.0,
+        )
+    except httpx.HTTPError:
+        raise HTTPException(status_code=503, detail="GitHub Actions could not be reached.")
+    if response.status_code not in (200, 204):
+        raise HTTPException(status_code=502, detail="GitHub rejected the approved agent task.")
+    app.logger.info("Approved agent task dispatched: %s (%s)", request.task_type.value, request_id)
+    return {
+        "status": "queued",
+        "request_id": request_id,
+        "task_type": request.task_type.value,
+        "workflow": "agent-approved-task.yml",
+        "message": "GitHub Actions accepted the approved task. Check the workflow run for the final result.",
+    }
 
 
 @app.get("/v1/tools")
