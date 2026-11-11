@@ -11,14 +11,10 @@ Arabic-first, permission-first Android security workbench. The repository contai
 - APK workflow: private Supabase Storage upload, short-lived signed URL, isolated GitHub Actions runner, Apktool/JADX decompilation and MobSF static scan.
 - Static source workflow: one explicit full-suite action that runs all 8 source-analysis tools (Semgrep, Gitleaks, Trivy, Checkov, Syft, Grype, YARA, ClamAV).
 - API: FastAPI with Supabase Auth, tenant-owned workspaces, server-side asset authorization, audit events, and an advisory-only OpenRouter endpoint.
-- Local chat panel: loopback-only OpenAI-compatible inference endpoint. It does **not** bundle a model runtime, start a local inference server, or connect directly to LocalMind; a separate local server/bridge is required.
-
+- Local chat panel: loopback-only OpenAI-compatible inference endpoint. `scripts/setup-local-ai-termux.sh` builds llama.cpp and downloads the 0.5B Qwen2.5-Coder GGUF model for on-device inference. The APK does not bundle model weights.\n- Replicate MCP: `mcp-bridge/` contains a loopback-only Termux bridge to the official `replicate-mcp` stdio server. The Android panel discovers tools and requires explicit approval before each call. Replicate predictions may incur charges.\n- Approved task agent: `POST /v1/agent/plan` previews two bounded tasks; `POST /v1/agent/execute` requires explicit approval before GitHub Actions runs API tests or builds a debug APK. It does not accept arbitrary shell commands or perform autonomous source edits.\n
 ## Not yet integrated or verified
 
-- Replica MCP: not connected. The repository does not contain a Replica endpoint, transport, or authentication configuration.
-- Autonomous coding agent: not implemented. The AI review endpoint is advisory-only and cannot run tools or edit projects.
-- Fully embedded offline LLM: not bundled. The local chat panel only connects to an already-running local inference server.
-- Ghidra, Androguard, APKLeaks, and radare2: catalogued, but not part of the verified API-triggered APK pipeline.
+- Replicate MCP: local Termux bridge and Android approval UI are implemented in the feature branch; actual connection still requires a user-owned Replicate token and an on-device test.\n- General-purpose autonomous code editing: not implemented. The bounded task agent can only run the predefined API-test and Android-debug-build workflows after explicit approval.\n- Offline LLM: model weights are not bundled in the APK; the Termux setup script provides the supported llama.cpp/Qwen2.5-Coder local runtime. Device-side inference has not yet been tested on physical hardware.\n- Ghidra, Androguard, APKLeaks, and radare2: catalogued, but not part of the verified API-triggered APK pipeline.
 - Active network tools: remain in separate approval-gated workflows; they are not dispatched from the Android API.
 - Cloud deployment: Render service state and required server secrets have not been verified in this session.
 
