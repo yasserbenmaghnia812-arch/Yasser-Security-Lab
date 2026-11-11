@@ -12,10 +12,9 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -25,57 +24,49 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
-private const val REPLICATE_MCP_BRIDGE = "http://127.0.0.1:8765"
+private const val REPLICA_API_BASE = "https://yasser-security-lab-api-7w2p.onrender.com"
 
 private data class ReplicaMcpTool(
     val name: String,
-    val description: String
+    val description: String,
+    val inputSchema: String
 )
 
 @Composable
-fun ReplicaMcpPanel() {
+fun ReplicaMcpPanel(accessToken: String) {
     val scope = rememberCoroutineScope()
-    var bridgeToken by remember { mutableStateOf("") }
     var tools by remember { mutableStateOf<List<ReplicaMcpTool>>(emptyList()) }
     var selectedTool by remember { mutableStateOf("") }
     var argumentsJson by remember { mutableStateOf("{}") }
     var approved by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf("شغّل Replicate MCP Bridge من Termux أولاً.") }
+    var status by remember { mutableStateOf("اكتشف أدوات Replica MCP من الخادم الآمن.") }
     var resultText by remember { mutableStateOf("") }
 
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(9.dp)
-        ) {
-            Text("Replicate MCP", fontWeight = FontWeight.Bold)
-            Text("اتصال محلي عبر Termux. لا تضع مفتاح Replicate هنا؛ أدخل رمز الجسر المحلي فقط.")
-            OutlinedTextField(
-                value = bridgeToken,
-                onValueChange = { bridgeToken = it },
-                label = { Text("رمز الجسر المحلي") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
-            )
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Text("Replica MCP — اتصال سحابي آمن", fontWeight = FontWeight.Bold)
+            Text("يتم الاتصال عبر API بعد تسجيل الدخول. رمز MCP السري يبقى على الخادم ولا يُرسل إلى الهاتف.")
             Button(
-                enabled = !busy && bridgeToken.isNotBlank(),
+                enabled = !busy,
                 onClick = {
                     busy = true
                     resultText = ""
                     scope.launch {
                         try {
-                            val discovered = withContext(Dispatchers.IO) {
-                                val response = bridgeRequest("GET", "/v1/mcp/tools", bridgeToken, null)
-                                val array = response.getJSONArray("tools")
-                                buildList {
+                            val response = withContext(Dispatchers.IO) {
+                                replicaApiRequest("GET", "/v1/replica/tools", accessToken, null)
+                            }
+                            val array = response.optJSONArray("tools")
+                            val discovered = buildList {
+                                if (array != null) {
                                     for (index in 0 until array.length()) {
                                         val item = array.getJSONObject(index)
                                         add(
                                             ReplicaMcpTool(
-                                                item.optString("name"),
-                                                item.optString("description")
+                                                name = item.optString("name"),
+                                                description = item.optString("description"),
+                                                inputSchema = item.optJSONObject("input_schema")?.toString(2) ?: "{}"
                                             )
                                         )
                                     }
@@ -83,48 +74,40 @@ fun ReplicaMcpPanel() {
                             }
                             tools = discovered
                             selectedTool = discovered.firstOrNull()?.name.orEmpty()
-                            status = "تم اكتشاف ${discovered.size} أداة من Replicate MCP."
+                            status = if (discovered.isEmpty()) {
+                                "لم يُرجع الخادم أدوات متاحة. تحقق من إعداد Replica MCP."
+                            } else {
+                                "تم اكتشاف ${discovered.size} أداة من Replica MCP."
+                            }
                         } catch (error: Exception) {
-                            status = "تعذر الاتصال: ${error.message ?: "تحقق من Termux والرمز المحلي."}"
+                            status = "تعذر اكتشاف الأدوات: ${error.message ?: "خطأ غير معروف"}"
                         } finally {
                             busy = false
                         }
                     }
                 },
                 modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(if (busy) "جارٍ الاتصال..." else "اكتشاف أدوات MCP")
+            ) { Text(if (busy) "جارٍ الاتصال..." else "اكتشاف أدوات Replica MCP") }
+
+            tools.forEach { tool ->
+                OutlinedButton(
+                    enabled = !busy,
+                    onClick = {
+                        selectedTool = tool.name
+                        argumentsJson = "{}"
+                        approved = false
+                        resultText = ""
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (selectedTool == tool.name) "✓ ${tool.name}" else tool.name)
+                }
             }
-            Text(status)
-            if (tools.isNotEmpty()) {
-                Text("اختر الأداة", fontWeight = FontWeight.SemiBold)
-                tools.take(12).forEach { tool ->
-                    OutlinedButton(
-                        onClick = {
-                            selectedTool = tool.name
-                            approved = false
-                            resultText = ""
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(if (selectedTool == tool.name) "✓ ${tool.name}" else tool.name)
-                            if (tool.description.isNotBlank()) {
-                                Text(tool.description.take(180))
-                            }
-                        }
-                    }
-                }
-                if (tools.size > 12) {
-                    Text("تُعرض أول 12 أداة فقط في هذه الشاشة.")
-                }
-                OutlinedTextField(
-                    value = selectedTool,
-                    onValueChange = { selectedTool = it; approved = false },
-                    label = { Text("اسم الأداة المحددة") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
+
+            val selected = tools.firstOrNull { it.name == selectedTool }
+            if (selected != null) {
+                Text(selected.description)
+                Text("مخطط المدخلات: ${selected.inputSchema}")
                 OutlinedTextField(
                     value = argumentsJson,
                     onValueChange = { argumentsJson = it; approved = false },
@@ -132,30 +115,28 @@ fun ReplicaMcpPanel() {
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 3
                 )
-                Text("قد تنشئ بعض الأدوات تنبؤات سحابية مدفوعة على Replicate. راجع اسم الأداة والوسائط قبل الموافقة.")
-                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = approved, onCheckedChange = { approved = it })
-                    Text("أوافق على استدعاء هذه الأداة بهذه الوسائط.")
+                    Text("أوافق على استدعاء هذه الأداة بهذه الوسائط الآن.")
                 }
                 Button(
-                    enabled = !busy && approved && selectedTool.isNotBlank() && bridgeToken.isNotBlank(),
+                    enabled = !busy && approved,
                     onClick = {
                         busy = true
                         scope.launch {
                             try {
                                 val args = JSONObject(argumentsJson)
                                 val body = JSONObject()
-                                    .put("name", selectedTool.trim())
+                                    .put("tool_name", selectedTool)
                                     .put("arguments", args)
                                     .put("user_approved", true)
                                 val response = withContext(Dispatchers.IO) {
-                                    bridgeRequest("POST", "/v1/mcp/call", bridgeToken, body)
+                                    replicaApiRequest("POST", "/v1/replica/call", accessToken, body)
                                 }
                                 resultText = response.toString(2)
-                                status = "اكتمل استدعاء ${selectedTool}."
+                                status = "اكتمل استدعاء الأداة. راجع النتيجة قبل المتابعة."
                             } catch (error: Exception) {
-                                resultText = ""
-                                status = "فشل الاستدعاء: ${error.message ?: "خطأ غير معروف"}"
+                                status = "فشل استدعاء الأداة: ${error.message ?: "تحقق من JSON والاتصال."}"
                             } finally {
                                 approved = false
                                 busy = false
@@ -163,30 +144,30 @@ fun ReplicaMcpPanel() {
                         }
                     },
                     modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(if (busy) "جارٍ التنفيذ..." else "تنفيذ الأداة بعد الموافقة")
-                }
+                ) { Text(if (busy) "جارٍ التنفيذ..." else "موافقة واستدعاء الأداة") }
             }
+
+            Text(status)
             if (resultText.isNotBlank()) {
-                Text("النتيجة", fontWeight = FontWeight.SemiBold)
+                Text("نتيجة MCP", fontWeight = FontWeight.Bold)
                 Text(resultText)
             }
         }
     }
 }
 
-private fun bridgeRequest(
+private fun replicaApiRequest(
     method: String,
     path: String,
-    token: String,
+    accessToken: String,
     body: JSONObject?
 ): JSONObject {
-    val connection = (URL(REPLICATE_MCP_BRIDGE + path).openConnection() as HttpURLConnection).apply {
+    val connection = (URL(REPLICA_API_BASE + path).openConnection() as HttpURLConnection).apply {
         requestMethod = method
-        connectTimeout = 5000
+        connectTimeout = 15000
         readTimeout = 120000
+        setRequestProperty("Authorization", "Bearer $accessToken")
         setRequestProperty("Accept", "application/json")
-        setRequestProperty("Authorization", "Bearer $token")
         if (body != null) {
             doOutput = true
             setRequestProperty("Content-Type", "application/json")
@@ -198,12 +179,16 @@ private fun bridgeRequest(
         }
         val code = connection.responseCode
         val stream = if (code in 200..299) connection.inputStream else connection.errorStream
-        val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+        val responseText = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
         if (code !in 200..299) {
-            val message = try { JSONObject(text).optString("error", "HTTP $code") } catch (_: Exception) { "HTTP $code" }
-            throw IOException(message)
+            val detail = try {
+                JSONObject(responseText).optString("detail", "HTTP $code")
+            } catch (_: Exception) {
+                "HTTP $code"
+            }
+            throw IOException(detail)
         }
-        return JSONObject(text)
+        return JSONObject(responseText)
     } finally {
         connection.disconnect()
     }
