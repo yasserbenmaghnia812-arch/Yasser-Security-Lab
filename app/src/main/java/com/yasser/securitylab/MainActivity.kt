@@ -338,6 +338,7 @@ private object Api {
             .put("asset_id", assetId)
             .put("tool_key", toolKey)
             .put("mode", "static")
+            .put("user_approved", true)
             .put("parameters", JSONObject())
             .toString()
             .toByteArray(Charsets.UTF_8)
