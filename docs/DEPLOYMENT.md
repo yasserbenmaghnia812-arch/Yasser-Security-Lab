@@ -54,7 +54,7 @@ Never add Supabase service-role keys, OpenRouter keys, or the Render API's GitHu
 
 ## Android
 
-The workflow `.github/workflows/android-apk.yml` builds a **Debug** APK. It is suitable for testing, not public production distribution. A production release requires a separately generated signing keystore and protected signing secrets. Do not share the keystore or passwords.
+The workflow `.github/workflows/android-apk.yml` builds a **Debug** APK for testing. The separate `.github/workflows/android-release.yml` builds a signed, non-debuggable Release APK when the four GitHub Actions secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD` are configured. Generate and retain your own keystore; it is required for future updates under the same Android app identity. Never commit or disclose the keystore or passwords. This release workflow has not yet been run because no private signing keystore has been configured.
 
 The application requires Android 10 (API 29) or newer. The loopback-only HTTP exception is used only for an optional local inference endpoint at `127.0.0.1` or `localhost`; external cleartext traffic remains disabled.
 
