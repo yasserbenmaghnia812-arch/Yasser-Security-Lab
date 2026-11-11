@@ -436,8 +436,11 @@ async def upload_apk(
     request: Request,
     file_name: str,
     authorization_note: str,
+    authorization_confirmed: bool,
     user: dict[str, Any] = Depends(current_user),
 ):
+    if authorization_confirmed is not True:
+        raise HTTPException(status_code=403, detail="Explicit authorization confirmation is required for each APK upload.")
     if len(authorization_note.strip()) < 12:
         raise HTTPException(status_code=400, detail="A clear authorization statement is required.")
     safe_name = os.path.basename(file_name).replace(" ", "_")
