@@ -17,7 +17,7 @@ Python 3.11+:
 - `GET /v1/jobs/{job_id}` — returns job state and the matching GitHub Actions run when available.
 - `POST /v1/apks/upload` — authenticated private APK upload and GitHub Actions reverse-engineering dispatch. Requires `file_name`, `authorization_note`, and explicit `authorization_confirmed=true` on every upload.
 
-All job endpoints require a valid Supabase access token in the Bearer header. The API checks asset ownership, server-recorded authorization, allowed test mode, and expiry before dispatch.
+All job endpoints require a valid Supabase access token in the Bearer header. The API checks asset ownership, server-recorded authorization, allowed test mode, and expiry before dispatch. Static scan dispatch additionally requires `user_approved=true` on every request and records `approved_at`/`approved_by` in the job row. APK upload separately requires `authorization_confirmed=true` for every uploaded file.
 
 ## Actual dispatch coverage
 
@@ -46,7 +46,7 @@ The API supports OpenRouter's free open-weight model routes. Defaults are `coher
 ## Current tool execution model
 
 - 8 source-analysis tools run in `.github/workflows/security-static.yml`.
-- 7 APK/native-binary analyzers run in that workflow only when an authorized APK exists under `authorized-samples/`.
+- The API-triggered APK workflow runs Apktool, JADX, and MobSF on a privately uploaded, user-authorized APK.
 - 11 low-impact network tools run in `.github/workflows/security-network-approved.yml` only after manual authorization confirmation and exact target/scope validation.
 - mitmproxy is a local Termux setup documented in `docs/MITMPROXY-TERMUX.md`.
 
