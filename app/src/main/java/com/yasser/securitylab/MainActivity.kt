@@ -91,11 +91,12 @@ private object Api {
         )
     }
 
-    fun upload(uri: Uri, context: Context, token: String, note: String): JSONObject {
+    fun upload(uri: Uri, context: Context, token: String, note: String, authorizationConfirmed: Boolean): JSONObject {
         val name = context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
             val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
             if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
         } ?: "selected.apk"
+        if (!authorizationConfirmed) throw IOException("يجب تأكيد ملكية APK أو الإذن قبل الرفع.")
         if (!name.lowercase().endsWith(".apk")) throw IOException("اختر ملف APK فقط.")
         val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
             ?: throw IOException("تعذر قراءة الملف المحدد.")
@@ -104,7 +105,7 @@ private object Api {
         val queryName = URLEncoder.encode(name, "UTF-8")
         val queryNote = URLEncoder.encode(note, "UTF-8")
         return request(
-            "POST", "$API_BASE/v1/apks/upload?file_name=$queryName&authorization_note=$queryNote",
+            "POST", "$API_BASE/v1/apks/upload?file_name=$queryName&authorization_note=$queryNote&authorization_confirmed=true",
             mapOf("Authorization" to "Bearer $token", "Accept" to "application/json"),
             bytes, "application/vnd.android.package-archive"
         )
@@ -122,7 +123,8 @@ fun SecurityLabApp() {
     var publishableKey by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var authorizationNote by remember { mutableStateOf("أملك هذا التطبيق أو لدي إذن صريح من مالكه لتحليله أمنياً.") }
+    var authorizationNote by remember { mutableStateOf("") }
+    var authorizationConfirmed by remember { mutableStateOf(false) }
     var accessToken by remember { mutableStateOf<String?>(null) }
     var userEmail by remember { mutableStateOf("") }
     var selectedApk by remember { mutableStateOf<Uri?>(null) }
@@ -233,27 +235,37 @@ fun SecurityLabApp() {
                             Text("الحساب: $userEmail", fontWeight = FontWeight.Bold)
                             OutlinedTextField(
                                 authorizationNote, { authorizationNote = it },
-                                label = { Text("إثبات ملكية التطبيق أو الإذن") },
+                                label = { Text("اشرح ملكيتك للملف أو مصدر الإذن") },
                                 modifier = Modifier.fillMaxWidth(), minLines = 2
                             )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Checkbox(
+                                    checked = authorizationConfirmed,
+                                    onCheckedChange = { authorizationConfirmed = it }
+                                )
+                                Text("أؤكد أنني أملك هذا التطبيق أو لدي إذن صريح لتحليله.")
+                            }
                             Text("رفع APK للتحليل", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                             OutlinedButton(onClick = { apkPicker.launch(arrayOf("application/vnd.android.package-archive", "application/octet-stream")) }, modifier = Modifier.fillMaxWidth()) {
                                 Text(if (selectedApk == null) "اختيار ملف APK من الهاتف" else "تغيير الملف المحدد")
                             }
                             if (selectedApk != null) Text(selectedApk?.lastPathSegment ?: "ملف APK محدد", color = Muted, fontSize = 12.sp)
-                            Button(enabled = !busy && selectedApk != null && authorizationNote.length >= 12, onClick = {
+                            Button(enabled = !busy && selectedApk != null && authorizationNote.trim().length >= 12 && authorizationConfirmed, onClick = {
                                 val uri = selectedApk ?: return@Button
                                 val token = accessToken ?: return@Button
                                 busy = true
                                 message = "جارٍ رفع APK إلى التخزين الخاص..."
                                 scope.launch {
                                     try {
-                                        val result = withContext(Dispatchers.IO) { Api.upload(uri, context, token, authorizationNote) }
+                                        val result = withContext(Dispatchers.IO) { Api.upload(uri, context, token, authorizationNote, authorizationConfirmed) }
                                         jobId = result.getString("job_id")
                                         jobStatus = result.optString("status", "queued")
                                         message = "تم رفع APK وإرسال مهمة التحليل. رقم المهمة: $jobId"
                                     } catch (e: Exception) { message = "فشل الرفع أو بدء التحليل: ${e.message}" }
-                                    finally { busy = false }
+                                    finally {
+                                        authorizationConfirmed = false
+                                        busy = false
+                                    }
                                 }
                             }, modifier = Modifier.fillMaxWidth()) { Text(if (busy) "جارٍ التنفيذ..." else "رفع وتشغيل JADX + Apktool + MobSF") }
                         }
