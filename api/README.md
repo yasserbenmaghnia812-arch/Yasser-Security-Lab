@@ -15,14 +15,17 @@ Python 3.11+:
 - `POST /v1/jobs/plan` — authenticated scope validation; never starts a scan.
 - `POST /v1/jobs/dispatch` — dispatches an approved **static source-analysis** job to GitHub Actions.
 - `GET /v1/jobs/{job_id}` — returns job state and the matching GitHub Actions run when available.
+- `POST /v1/apks/upload` — authenticated private APK upload and GitHub Actions reverse-engineering dispatch. Requires `file_name`, `authorization_note`, and explicit `authorization_confirmed=true` on every upload.
 
 All job endpoints require a valid Supabase access token in the Bearer header. The API checks asset ownership, server-recorded authorization, allowed test mode, and expiry before dispatch.
 
 ## Actual dispatch coverage
 
-The API dispatch path is currently restricted to these 8 static tools: Semgrep, Gitleaks, Trivy, Checkov, Syft, Grype, YARA, and ClamAV. It creates an `analysis_jobs` row, dispatches `.github/workflows/security-static.yml` with a correlation ID, writes an audit event, and resolves the GitHub run from its run name when the client polls the job endpoint.
+The static-source dispatch path supports 8 verified source-analysis tools: Semgrep, Gitleaks, Trivy, Checkov, Syft, Grype, YARA, and ClamAV. It creates an `analysis_jobs` row, dispatches `.github/workflows/security-static.yml`, writes an audit event, and resolves the GitHub run when the client polls the job endpoint.
 
-Active network tests are **not** dispatched by this API. They remain behind the separate manual workflow, a single exact public target, an authorization checkbox, and a scope note. The API does not dispatch APK reverse-engineering jobs yet: private APK upload and secure transfer to an isolated runner must be completed first.
+The separate `POST /v1/apks/upload` route accepts an owned or explicitly authorized APK, validates the ZIP signature and size, stores the file in the private `apk-uploads` bucket, creates a time-limited signed download URL, records a reverse-engineering job, and dispatches `.github/workflows/apk-analysis-api.yml`. Every upload requires both an authorization note and the explicit `authorization_confirmed=true` confirmation. The workflow runs Apktool, JADX, and MobSF; partial JADX results are recorded without silently treating them as a clean decompilation.
+
+Active network assessments are **not** dispatched through the Android API. They remain behind the separate manual workflow, a single exact public target, an authorization checkbox, and a scope note. Ghidra, Androguard, APKLeaks, and radare2 are catalogued but are not part of the verified API-triggered APK workflow yet.
 
 ## Required Render environment variables
 
