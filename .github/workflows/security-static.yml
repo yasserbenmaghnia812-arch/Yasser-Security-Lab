@@ -130,7 +130,8 @@ jobs:
             exit 2
           fi
           set +e
-          sudo clamscan -r --infected --log=clamav.txt --exclude-dir='^./\.git' .
+          # Redirect from the unprivileged shell so the report remains readable/uploadable.
+          sudo clamscan -r --infected --exclude-dir='^./\.git' . > clamav.txt 2>&1
           scan_status=$?
           set -e
           cat clamav.txt
