@@ -27,3 +27,5 @@ jobs:
               "https://yasser-security-lab-api-7w2p.onrender.com$path")"
             test "$code" = "401"
           done
+
+# Re-run smoke checks after the API deployment containing the Replica routes.
