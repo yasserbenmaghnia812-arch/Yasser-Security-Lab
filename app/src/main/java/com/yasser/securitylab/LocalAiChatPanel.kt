@@ -142,12 +142,12 @@ private fun completeLocalChat(
     val host = parsed.host.lowercase()
     if (
         parsed.protocol != "http" ||
-        host !in setOf("127.0.0.1", "localhost", "::1", "[::1]") ||
+        host !in setOf("127.0.0.1", "localhost") ||
         parsed.userInfo != null ||
         parsed.query != null ||
         parsed.ref != null
     ) {
-        throw IOException("يسمح هذا الإصدار بخادم محلي فقط: 127.0.0.1 أو localhost أو ::1.")
+        throw IOException("يسمح هذا الإصدار بخادم محلي فقط: 127.0.0.1 أو localhost.")
     }
 
     val endpointPath = parsed.path.trimEnd('/') + "/chat/completions"
