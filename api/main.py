@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
@@ -511,12 +512,33 @@ async def upload_apk(
 
 
 @app.post("/v1/assistant/review")
+
+SENSITIVE_TEXT_PATTERNS = [
+    (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.I | re.S), "[REDACTED_PRIVATE_KEY]"),
+    (re.compile(r"\\bAKIA[0-9A-Z]{16}\\b"), "[REDACTED_AWS_ACCESS_KEY]"),
+    (re.compile(r"\\bgh[pousr]_[A-Za-z0-9_]{20,}\\b|\\bgithub_pat_[A-Za-z0-9_]{20,}\\b"), "[REDACTED_GITHUB_TOKEN]"),
+    (re.compile(r"\\bsk_(?:live|test)_[A-Za-z0-9]{20,}\\b"), "[REDACTED_PAYMENT_SECRET]"),
+    (re.compile(r"(?i)\\b(bearer\\s+)[A-Za-z0-9._~+/=-]{16,}"), r"\\1[REDACTED_TOKEN]"),
+    (re.compile(r"\\beyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\b"), "[REDACTED_JWT]"),
+    (re.compile(r"(?i)\\b(api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|secret)\\s*([:=])\\s*[\"']?[A-Za-z0-9._~+/=-]{8,}[\"']?"), r"\\1\\2[REDACTED]"),
+]
+
+
+def redact_sensitive_text(value: str) -> tuple[str, bool]:
+    redacted = value
+    for pattern, replacement in SENSITIVE_TEXT_PATTERNS:
+        redacted = pattern.sub(replacement, redacted)
+    return redacted, redacted != value
+
+
 def assistant_review(request: AssistantRequest, user: dict[str, Any] = Depends(current_user)):
     api_key = os.getenv("OPENROUTER_API_KEY", "")
     if not api_key:
         raise HTTPException(status_code=503, detail="AI advisory is not configured. Add OPENROUTER_API_KEY to the Render service.")
     primary = os.getenv("OPENROUTER_MODEL", "cohere/north-mini-code:free")
     fallback = os.getenv("OPENROUTER_FALLBACK_MODEL", "nvidia/nemotron-3.5-lightning:free")
+    safe_question, question_redacted = redact_sensitive_text(request.question)
+    safe_context, context_redacted = redact_sensitive_text(request.context)
     messages = [
         {
             "role": "system",
@@ -562,6 +584,7 @@ def assistant_review(request: AssistantRequest, user: dict[str, Any] = Depends(c
                 "model": data.get("model") or model,
                 "fallback_used": model != primary,
                 "execution_enabled": False,
+                "sensitive_content_redacted": question_redacted or context_redacted,
             }
         except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError):
             failures.append(502)
