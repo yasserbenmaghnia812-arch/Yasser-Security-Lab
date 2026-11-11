@@ -8,6 +8,13 @@ on:
       - '*.gradle.kts'
       - 'settings.gradle.kts'
       - '.github/workflows/android-apk.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - '*.gradle.kts'
+      - 'settings.gradle.kts'
+      - '.github/workflows/android-apk.yml'
 
 permissions:
   contents: read
