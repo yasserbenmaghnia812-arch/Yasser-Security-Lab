@@ -21,7 +21,7 @@ APK_WORKFLOW = "apk-analysis-api.yml"
 APK_BUCKET = "apk-uploads"
 MAX_APK_BYTES = 150 * 1024 * 1024
 APK_ZIP_SIGNATURE = bytes.fromhex("504b0304")
-STATIC_TOOLS = {"semgrep", "gitleaks", "trivy", "checkov", "grype", "syft", "yara", "clamav"}
+STATIC_TOOLS = {"full-static-suite"}
 
 origins = [item.strip() for item in os.getenv("ALLOWED_ORIGINS", "").split(",") if item.strip()]
 if origins:
