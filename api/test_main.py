@@ -279,7 +279,7 @@ def test_only_verified_source_and_apk_scanners_are_advertised_as_api_enabled():
 def test_apk_upload_requires_valid_filename_and_authorization(monkeypatch):
     authenticated_user()
     response = client.post(
-        "/v1/apks/upload?file_name=not-a-file.txt&authorization_note=I own this application and authorize testing.",
+        "/v1/apks/upload?file_name=not-a-file.txt&authorization_note=I+own+this+application+and+authorize+testing.&authorization_confirmed=true",
         content=bytes.fromhex("504b0304") + b"test",
         headers={"Content-Type":"application/octet-stream"},
     )
