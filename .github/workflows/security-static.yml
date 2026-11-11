@@ -87,19 +87,34 @@ jobs:
           scanned=0
           matches=0
           errors=0
+          tmp_out="$(mktemp)"
+          tmp_err="$(mktemp)"
+          # Validate that the rules compile before scanning repository files.
+          yara security/yara/secrets.yar /dev/null > "$tmp_out" 2> "$tmp_err"
+          compile_status=$?
+          if [ "$compile_status" -ne 0 ] || [ -s "$tmp_err" ]; then
+            cat "$tmp_err"
+            echo "YARA rules failed validation."
+            exit 2
+          fi
           while IFS= read -r -d '' file; do
-            output="$(yara security/yara/secrets.yar "$file" 2>&1)"
+            : > "$tmp_out"
+            : > "$tmp_err"
+            yara security/yara/secrets.yar "$file" > "$tmp_out" 2> "$tmp_err"
             result=$?
+            output="$(cat "$tmp_out")"
+            error_output="$(cat "$tmp_err")"
             scanned=$((scanned + 1))
-            if [ "$result" -eq 0 ]; then
+            if [ "$result" -ne 0 ] || [ -n "$error_output" ]; then
+              printf 'ERROR scanning %s: %s\n' "$file" "$error_output" >> yara.txt
+              errors=$((errors + 1))
+            elif [ -n "$output" ]; then
               printf '%s\n' "$output" >> yara.txt
               matches=$((matches + 1))
-            elif [ "$result" -gt 1 ]; then
-              printf 'ERROR scanning %s: %s\n' "$file" "$output" >> yara.txt
-              errors=$((errors + 1))
             fi
           done < <(find . -type f ! -path './.git/*' ! -path './security/yara/*' -print0)
-          printf '\nScanned files: %s\nYARA matches: %s\nScanner errors: %s\n' "$scanned" "$matches" "$errors" >> yara.txt
+          rm -f "$tmp_out" "$tmp_err"
+          printf '\nScanned files: %s\nFiles with YARA matches: %s\nScanner errors: %s\n' "$scanned" "$matches" "$errors" >> yara.txt
           cat yara.txt
           if [ "$errors" -gt 0 ]; then exit 2; fi
           if [ "$matches" -gt 0 ]; then exit 1; fi
