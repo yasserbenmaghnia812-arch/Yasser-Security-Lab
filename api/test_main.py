@@ -286,10 +286,20 @@ def test_apk_upload_requires_valid_filename_and_authorization(monkeypatch):
     assert response.status_code == 400
 
 
+def test_apk_upload_rejects_missing_explicit_confirmation(monkeypatch):
+    authenticated_user()
+    response = client.post(
+        "/v1/apks/upload?file_name=sample.apk&authorization_note=I+own+this+APK+and+authorize+testing.&authorization_confirmed=false",
+        content=bytes.fromhex("504b0304") + b"test",
+        headers={"Content-Type": "application/octet-stream"},
+    )
+    assert response.status_code == 403
+
+
 def test_apk_upload_requires_authorization_note(monkeypatch):
     authenticated_user()
     response = client.post(
-        "/v1/apks/upload?file_name=sample.apk&authorization_note=short",
+        "/v1/apks/upload?file_name=sample.apk&authorization_note=short&authorization_confirmed=true",
         content=bytes.fromhex("504b0304") + b"test",
         headers={"Content-Type":"application/octet-stream"},
     )
@@ -336,7 +346,7 @@ def test_apk_upload_stores_private_asset_and_dispatches_analysis(monkeypatch):
     monkeypatch.setattr(main, "_audit", lambda *_: None)
 
     response = client.post(
-        "/v1/apks/upload?file_name=sample.apk&authorization_note=I+own+this+APK+and+authorize+static+security+analysis.",
+        "/v1/apks/upload?file_name=sample.apk&authorization_note=I+own+this+APK+and+authorize+static+security+analysis.&authorization_confirmed=true",
         content=bytes.fromhex("504b0304") + b"sample-apk-bytes",
         headers={"Content-Type": "application/vnd.android.package-archive"},
     )
