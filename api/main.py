@@ -19,6 +19,7 @@ STATIC_WORKFLOW = "security-static.yml"
 APK_WORKFLOW = "apk-analysis-api.yml"
 APK_BUCKET = "apk-uploads"
 MAX_APK_BYTES = 150 * 1024 * 1024
+APK_ZIP_SIGNATURE = bytes.fromhex("504b0304")
 STATIC_TOOLS = {"semgrep", "gitleaks", "trivy", "checkov", "grype", "syft", "yara", "clamav"}
 
 origins = [item.strip() for item in os.getenv("ALLOWED_ORIGINS", "").split(",") if item.strip()]
@@ -448,7 +449,7 @@ async def upload_apk(
     data = await request.body()
     if not data or len(data) > MAX_APK_BYTES:
         raise HTTPException(status_code=413 if len(data) > MAX_APK_BYTES else 400, detail="APK is empty or exceeds the 150 MB upload limit.")
-    if not data.startswith(b"PK\\x03\\x04"):
+    if not data.startswith(APK_ZIP_SIGNATURE):
         raise HTTPException(status_code=415, detail="The uploaded file does not have a valid APK/ZIP signature.")
     url, _, service_key = _config()
     headers = _service_headers(service_key)
