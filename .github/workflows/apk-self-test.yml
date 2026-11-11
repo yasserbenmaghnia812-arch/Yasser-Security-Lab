@@ -54,20 +54,42 @@ jobs:
       - name: Run Apktool and JADX
         shell: bash
         run: |
-          set -uo pipefail
+          set +e
           mkdir -p reports/apktool reports/jadx
-          apktool --version | tee reports/apktool-version.txt
-          find "$HOME/tools/jadx" -maxdepth 4 -type f -name jadx -print
+          apktool --version > reports/apktool-version.txt 2>&1
+          APKTOOL_VERSION_STATUS=$?
           JADX_BIN="$(find "$HOME/tools/jadx" -maxdepth 4 -type f -name jadx -print -quit)"
-          test -n "$JADX_BIN"
-          chmod +x "$JADX_BIN"
-          apktool d -f reports/yasser-security-lab.apk -o reports/apktool > reports/apktool.log 2>&1
-          APKTOOL_STATUS=$?
-          "$JADX_BIN" --show-bad-code -d reports/jadx reports/yasser-security-lab.apk > reports/jadx.log 2>&1
-          JADX_STATUS=$?
-          echo "Apktool exit: $APKTOOL_STATUS" | tee reports/decompiler-status.txt
-          echo "JADX exit: $JADX_STATUS" | tee -a reports/decompiler-status.txt
-          test "$APKTOOL_STATUS" -eq 0 -o "$JADX_STATUS" -eq 0
+          if [ -z "$JADX_BIN" ]; then
+            echo "JADX executable was not found after installation." > reports/jadx.log
+            JADX_STATUS=127
+          else
+            chmod +x "$JADX_BIN"
+            apktool d -f reports/yasser-security-lab.apk -o reports/apktool > reports/apktool.log 2>&1
+            APKTOOL_STATUS=$?
+            "$JADX_BIN" --show-bad-code -d reports/jadx reports/yasser-security-lab.apk > reports/jadx.log 2>&1
+            JADX_STATUS=$?
+          fi
+          if [ -z "${APKTOOL_STATUS+x}" ]; then
+            APKTOOL_STATUS=127
+            echo "Apktool did not run because JADX installation was incomplete." > reports/apktool.log
+          fi
+          APKTOOL_FILES="$(find reports/apktool -type f 2>/dev/null | wc -l)"
+          JADX_SOURCES="$(find reports/jadx -type f -name '*.java' 2>/dev/null | wc -l)"
+          {
+            echo "Apktool exit: $APKTOOL_STATUS"
+            echo "Apktool output files: $APKTOOL_FILES"
+            echo "JADX exit: $JADX_STATUS"
+            echo "JADX Java source files: $JADX_SOURCES"
+            if [ "$JADX_STATUS" -eq 0 ]; then
+              echo "JADX result: success"
+            elif [ "$JADX_SOURCES" -gt 0 ]; then
+              echo "JADX result: partial (review jadx.log; some classes failed to decompile)"
+            else
+              echo "JADX result: failed"
+            fi
+          } | tee reports/decompiler-status.txt
+          # Keep the workflow moving so MobSF can still run. The final summary
+          # distinguishes a clean, partial, and failed decompilation result.
       - name: Start MobSF static analyzer
         run: |
           key="$(openssl rand -hex 32)"
