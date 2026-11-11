@@ -1,4 +1,4 @@
-"""Central registry for the 27 open-source security tools.
+"""Central registry for 27 open-source security tools plus the full-suite orchestration action.
 
 Only tools wired into .github/workflows/security-static.yml are marked
 workflow_enabled. Network and proxy tools remain disabled until a scoped,
