@@ -21,6 +21,7 @@ on:
       - "index.html"
       - "render.yaml"
       - ".gitleaks.toml"
+      - "security/**"
       - ".github/workflows/security-static.yml"
 
 permissions:
@@ -59,8 +60,21 @@ jobs:
         run: syft dir:. -o cyclonedx-json=sbom.cdx.json
       - name: Install Grype
         uses: anchore/scan-action/download-grype@v5
+      - name: Add Grype to PATH
+        shell: bash
+        run: |
+          GRYPE_BIN="$(find /opt/hostedtoolcache/grype -type f -name grype -perm -111 -print -quit)"
+          if [ -z "$GRYPE_BIN" ]; then
+            echo "Grype executable not found after installer step."
+            exit 2
+          fi
+          echo "$(dirname "$GRYPE_BIN")" >> "$GITHUB_PATH"
+          "$GRYPE_BIN" version
       - name: Scan SBOM dependencies
-        run: grype sbom:sbom.cdx.json -o json > grype.json || true
+        shell: bash
+        run: |
+          grype sbom:sbom.cdx.json -o json > grype.json
+          python -m json.tool grype.json > /dev/null
       - name: Install YARA and ClamAV
         run: |
           sudo apt-get update
@@ -119,6 +133,7 @@ jobs:
             sbom.cdx.json
             grype.json
             yara.txt
+            freshclam-update.txt
             clamav.txt
           if-no-files-found: warn
 
