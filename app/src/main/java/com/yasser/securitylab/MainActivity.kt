@@ -107,15 +107,9 @@ private fun StaticScanPanel(
     onJobQueued: (String) -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    val availableTools = listOf(
-        "semgrep", "gitleaks", "trivy", "checkov",
-        "syft", "grype", "yara", "clamav"
-    )
     var authorizationNote by remember { mutableStateOf("") }
     var ownershipConfirmed by remember { mutableStateOf(false) }
     var assetId by remember { mutableStateOf("") }
-    var selectedTool by remember { mutableStateOf("semgrep") }
-    var menuExpanded by remember { mutableStateOf(false) }
     var scanConfirmed by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("سجّل ملكية المستودع أولاً، ثم أكّد كل فحص على حدة.") }
@@ -166,35 +160,13 @@ private fun StaticScanPanel(
             ) {
                 Text(if (busy) "جارٍ التسجيل..." else "تسجيل المستودع المصرّح")
             }
-            Box {
-                OutlinedButton(
-                    enabled = assetId.isNotBlank() && !busy,
-                    onClick = { menuExpanded = true },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("الأداة المحددة: $selectedTool")
-                }
-                DropdownMenu(
-                    expanded = menuExpanded,
-                    onDismissRequest = { menuExpanded = false }
-                ) {
-                    availableTools.forEach { key ->
-                        DropdownMenuItem(
-                            text = { Text(key) },
-                            onClick = {
-                                selectedTool = key
-                                menuExpanded = false
-                            }
-                        )
-                    }
-                }
-            }
+            Text("الحزمة تنفذ الأدوات الثماني معاً: Semgrep وGitleaks وTrivy وCheckov وSyft وGrype وYARA وClamAV.")
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(
                     checked = scanConfirmed,
                     onCheckedChange = { scanConfirmed = it }
                 )
-                Text("أوافق على تشغيل أداة $selectedTool الآن على المستودع المسجل.")
+                Text("أوافق على تشغيل الحزمة الكاملة ذات الأدوات الثماني الآن على المستودع المسجل.")
             }
             Button(
                 enabled = !busy && assetId.isNotBlank() && scanConfirmed,
@@ -204,7 +176,7 @@ private fun StaticScanPanel(
                     scope.launch {
                         try {
                             val result = withContext(Dispatchers.IO) {
-                                Api.dispatchStaticScan(accessToken, assetId, selectedTool)
+                                Api.dispatchStaticScan(accessToken, assetId)
                             }
                             val id = result.optString("job_id")
                             if (id.isBlank()) {
@@ -223,7 +195,7 @@ private fun StaticScanPanel(
                 },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(if (busy) "جارٍ الإرسال..." else "تشغيل $selectedTool")
+                Text(if (busy) "جارٍ الإرسال..." else "تشغيل الفحص الكامل (8 أدوات)")
             }
             Text(status, color = Muted, fontSize = 12.sp)
         }
@@ -334,10 +306,10 @@ private object Api {
         )
     }
 
-    fun dispatchStaticScan(token: String, assetId: String, toolKey: String): JSONObject {
+    fun dispatchStaticScan(token: String, assetId: String): JSONObject {
         val body = JSONObject()
             .put("asset_id", assetId)
-            .put("tool_key", toolKey)
+            .put("tool_key", "full-static-suite")
             .put("mode", "static")
             .put("user_approved", true)
             .put("parameters", JSONObject())
