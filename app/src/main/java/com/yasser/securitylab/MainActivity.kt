@@ -191,6 +191,8 @@ fun SecurityLabApp() {
                     }
                 }
 
+                LocalAiChatPanel()
+
                 if (accessToken == null) {
                     Card(shape = RoundedCornerShape(18.dp)) {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
