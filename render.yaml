@@ -30,3 +30,9 @@ services:
         value: cohere/north-mini-code:free
       - key: OPENROUTER_FALLBACK_MODEL
         value: nvidia/nemotron-3.5-lightning:free
+      - key: REPLICA_MCP_URL
+        value: https://replica-mcp-server-dfj0.onrender.com/mcp
+      - key: REPLICA_MCP_BEARER_TOKEN
+        sync: false
+      - key: AGENT_WORKFLOW_REF
+        value: main
