@@ -171,6 +171,39 @@ def test_public_config_exposes_only_publishable_supabase_settings(monkeypatch):
     assert "must-never-be-returned" not in response.text
 
 
+def test_ai_advisory_redacts_secrets_before_external_provider(monkeypatch):
+    authenticated_user()
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
+    captured = {}
+
+    class Response:
+        status_code = 200
+        def json(self):
+            return {
+                "model": "cohere/north-mini-code:free",
+                "choices": [{"message": {"content": "تمت المراجعة."}}]
+            }
+
+    def fake_post(url, **kwargs):
+        captured["content"] = kwargs["json"]["messages"][1]["content"]
+        return Response()
+
+    monkeypatch.setattr(main.httpx, "post", fake_post)
+    aws = "AKIA" + "0" * 16
+    github = "ghp_" + "x" * 32
+    bearer = "Bearer " + "b" * 32
+    response = client.post("/v1/assistant/review", json={
+        "question": "راجع هذا المفتاح: " + aws,
+        "context": "رمز GitHub " + github + " و" + bearer + " وAPI_KEY=" + "s" * 24
+    })
+    assert response.status_code == 200
+    assert response.json()["sensitive_content_redacted"] is True
+    assert aws not in captured["content"]
+    assert github not in captured["content"]
+    assert bearer not in captured["content"]
+    assert "s" * 24 not in captured["content"]
+
+
 def test_ai_advisory_uses_free_openrouter_model(monkeypatch):
     authenticated_user()
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
