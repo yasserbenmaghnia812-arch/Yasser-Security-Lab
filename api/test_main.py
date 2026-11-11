@@ -404,3 +404,56 @@ def test_apk_upload_stores_private_asset_and_dispatches_analysis(monkeypatch):
     assert dispatched[0][0] == "job-12345678"
     assert dispatched[0][1].startswith("https://example.supabase.co/storage/v1/object/sign/")
     assert dispatched[0][2] == "sample.apk"
+
+
+def test_agent_plan_is_preview_only_and_lists_safe_tasks():
+    authenticated_user()
+    response = client.post("/v1/agent/plan", json={"task_type": "android_debug_apk"})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["requires_approval"] is True
+    assert payload["execution_enabled"] is False
+    assert "Gradle assembleDebug" in " ".join(payload["steps"])
+
+
+def test_agent_execute_requires_explicit_approval(monkeypatch):
+    authenticated_user()
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    calls = []
+    monkeypatch.setattr(main.httpx, "post", lambda *args, **kwargs: calls.append(args))
+    response = client.post("/v1/agent/execute", json={"task_type": "api_tests"})
+    assert response.status_code == 403
+    assert calls == []
+
+
+def test_agent_execute_dispatches_only_allowlisted_approved_task(monkeypatch):
+    authenticated_user()
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+
+    class Response:
+        status_code = 204
+
+    calls = []
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs["json"]))
+        return Response()
+
+    monkeypatch.setattr(main.httpx, "post", fake_post)
+    response = client.post("/v1/agent/execute", json={
+        "task_type": "api_tests",
+        "user_approved": True
+    })
+    assert response.status_code == 200
+    assert response.json()["status"] == "queued"
+    assert calls[0][1]["inputs"]["approval_confirmed"] == "true"
+    assert calls[0][1]["inputs"]["task_type"] == "api_tests"
+    assert len(calls[0][1]["inputs"]["request_id"]) == 32
+
+
+def test_agent_rejects_unknown_task_type():
+    authenticated_user()
+    response = client.post("/v1/agent/execute", json={
+        "task_type": "run_shell",
+        "user_approved": True
+    })
+    assert response.status_code == 422
