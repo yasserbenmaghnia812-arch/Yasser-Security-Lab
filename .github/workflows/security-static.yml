@@ -66,11 +66,47 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y yara clamav
       - name: YARA repository scan
-        run: yara -r /usr/share/yara/rules/index.yar . > yara.txt 2>&1 || true
-      - name: ClamAV repository scan
+        shell: bash
         run: |
-          sudo freshclam || true
-          clamscan -r --infected --log=clamav.txt . || true
+          set +e
+          : > yara.txt
+          scanned=0
+          matches=0
+          errors=0
+          while IFS= read -r -d '' file; do
+            output="$(yara security/yara/secrets.yar "$file" 2>&1)"
+            result=$?
+            scanned=$((scanned + 1))
+            if [ "$result" -eq 0 ]; then
+              printf '%s\n' "$output" >> yara.txt
+              matches=$((matches + 1))
+            elif [ "$result" -gt 1 ]; then
+              printf 'ERROR scanning %s: %s\n' "$file" "$output" >> yara.txt
+              errors=$((errors + 1))
+            fi
+          done < <(find . -type f ! -path './.git/*' ! -path './security/yara/*' -print0)
+          printf '\nScanned files: %s\nYARA matches: %s\nScanner errors: %s\n' "$scanned" "$matches" "$errors" >> yara.txt
+          cat yara.txt
+          if [ "$errors" -gt 0 ]; then exit 2; fi
+          if [ "$matches" -gt 0 ]; then exit 1; fi
+      - name: ClamAV repository scan
+        shell: bash
+        run: |
+          sudo systemctl stop clamav-freshclam.service || true
+          sudo freshclam --stdout --verbose > freshclam-update.txt 2>&1
+          database_count="$(find /var/lib/clamav -maxdepth 1 -type f \( -name '*.cvd' -o -name '*.cld' \) | wc -l)"
+          if [ "$database_count" -eq 0 ]; then
+            cat freshclam-update.txt
+            echo "ClamAV signature database was not downloaded."
+            exit 2
+          fi
+          set +e
+          sudo clamscan -r --infected --log=clamav.txt --exclude-dir='^./\.git' .
+          scan_status=$?
+          set -e
+          cat clamav.txt
+          if [ "$scan_status" -eq 2 ]; then exit 2; fi
+          if [ "$scan_status" -eq 1 ]; then exit 1; fi
       - name: Upload source-analysis reports
         if: always()
         uses: actions/upload-artifact@v4
