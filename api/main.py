@@ -213,7 +213,7 @@ def _audit(workspace_id: str, user_id: str, job_id: str, event_type: str) -> Non
         response.raise_for_status()
     except httpx.HTTPError:
         # Audit failure is surfaced in service logs; it must not leak privileged details.
-        app.logger.warning("Audit write failed for job %s", job_id)
+        logging.getLogger(__name__).warning("Audit write failed for job %s", job_id)
 
 
 def _dispatch_apk(job_id: str, download_url: str, file_name: str) -> None:
@@ -407,7 +407,7 @@ def execute_agent_task(request: AgentTaskExecutionRequest, user: dict[str, Any] 
         raise HTTPException(status_code=503, detail="GitHub Actions could not be reached.")
     if response.status_code not in (200, 204):
         raise HTTPException(status_code=502, detail="GitHub rejected the approved agent task.")
-    app.logger.info("Approved agent task dispatched: %s (%s)", request.task_type.value, request_id)
+    logging.getLogger(__name__).info("Approved agent task dispatched: %s (%s)", request.task_type.value, request_id)
     return {
         "status": "queued",
         "request_id": request_id,
