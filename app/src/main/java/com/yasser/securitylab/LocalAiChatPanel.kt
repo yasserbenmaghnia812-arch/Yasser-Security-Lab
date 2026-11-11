@@ -23,18 +23,32 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
+private data class LocalChatTurn(val role: String, val content: String)
+
 /**
- * Connects to LocalMind's OpenAI-compatible local API.
- * The default endpoint is loopback-only; no paid provider or cloud API is used.
+ * Connects to a user-provided, loopback-only OpenAI-compatible inference server.
+ *
+ * This is not a direct LocalMind SDK integration. LocalMind must expose an
+ * OpenAI-compatible endpoint or the user must run a local bridge/server.
+ * No cloud endpoint or paid model provider is contacted by this panel.
  */
 @Composable
 fun LocalAiChatPanel() {
     val scope = rememberCoroutineScope()
-    var baseUrl by remember { mutableStateOf("http://127.0.0.1:8000/v1") }
+    var baseUrl by remember { mutableStateOf("http://127.0.0.1:11434/v1") }
     var apiKey by remember { mutableStateOf("") }
     var modelId by remember { mutableStateOf("") }
     var prompt by remember { mutableStateOf("") }
-    var answer by remember { mutableStateOf("حمّل نموذجاً محلياً في LocalMind، ثم شغّل Local API وأدخل بيانات الاتصال هنا.") }
+    var conversation by remember {
+        mutableStateOf(
+            listOf(
+                LocalChatTurn(
+                    "assistant",
+                    "هذه واجهة لنموذج محلي. شغّل خادم استدلال متوافقاً مع OpenAI على الهاتف، ثم أدخل عنوانه ومعرّف النموذج."
+                )
+            )
+        )
+    }
     var busy by remember { mutableStateOf(false) }
 
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -42,53 +56,68 @@ fun LocalAiChatPanel() {
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text("مساعد محلي — LocalMind", fontWeight = FontWeight.Bold)
-            Text("تُرسل الرسائل إلى النموذج الموجود على هذا الهاتف عبر اتصال محلي، دون Claude أو API مدفوع.")
+            Text("محادثة نموذج محلي", fontWeight = FontWeight.Bold)
+            Text(
+                "يتصل بخادم استدلال محلي متوافق مع OpenAI فقط. لا يوجد اتصال مباشر مدمج مع LocalMind حالياً، ولا تُرسل الرسائل إلى خدمة سحابية."
+            )
             OutlinedTextField(
                 value = baseUrl,
                 onValueChange = { baseUrl = it },
-                label = { Text("عنوان Local API") },
+                label = { Text("عنوان الخادم المحلي") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
             OutlinedTextField(
                 value = modelId,
                 onValueChange = { modelId = it },
-                label = { Text("معرّف النموذج من LocalMind") },
+                label = { Text("معرّف النموذج") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
             OutlinedTextField(
                 value = apiKey,
                 onValueChange = { apiKey = it },
-                label = { Text("مفتاح Local API") },
+                label = { Text("مفتاح الخادم (اختياري)") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
             )
+            conversation.takeLast(8).forEach { turn ->
+                Text(
+                    text = (if (turn.role == "user") "أنت: " else "المساعد: ") + turn.content,
+                    fontWeight = if (turn.role == "assistant") FontWeight.Normal else FontWeight.SemiBold
+                )
+            }
             OutlinedTextField(
                 value = prompt,
                 onValueChange = { prompt = it },
-                label = { Text("اكتب طلبك") },
+                label = { Text("اكتب رسالتك") },
                 modifier = Modifier.fillMaxWidth(),
                 minLines = 2
             )
             Button(
-                enabled = !busy && prompt.isNotBlank() && modelId.isNotBlank() && apiKey.isNotBlank(),
+                enabled = !busy && prompt.isNotBlank() && modelId.isNotBlank(),
                 onClick = {
                     val endpoint = baseUrl.trim().trimEnd('/')
                     val selectedModel = modelId.trim()
                     val secret = apiKey.trim()
                     val question = prompt.trim()
+                    val nextConversation = conversation + LocalChatTurn("user", question)
+                    conversation = nextConversation
+                    prompt = ""
                     busy = true
                     scope.launch {
                         try {
-                            answer = withContext(Dispatchers.IO) {
-                                completeLocalChat(endpoint, selectedModel, secret, question)
+                            val reply = withContext(Dispatchers.IO) {
+                                completeLocalChat(endpoint, selectedModel, secret, nextConversation)
                             }
-                            prompt = ""
+                            conversation = nextConversation + LocalChatTurn("assistant", reply)
                         } catch (error: Exception) {
-                            answer = "تعذر الاتصال بالنموذج المحلي: ${error.message ?: "خطأ غير معروف"}"
+                            val detail = error.message ?: "خطأ غير معروف"
+                            conversation = nextConversation + LocalChatTurn(
+                                "assistant",
+                                "تعذر الاتصال بالخادم المحلي: $detail"
+                            )
                         } finally {
                             busy = false
                         }
@@ -96,9 +125,9 @@ fun LocalAiChatPanel() {
                 },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(if (busy) "جارٍ التفكير..." else "إرسال إلى النموذج المحلي")
+                Text(if (busy) "جارٍ التفكير..." else "إرسال")
             }
-            Text(if (busy) "النموذج يعالج الطلب..." else answer)
+            Text(if (busy) "الخادم المحلي يعالج المحادثة..." else "المحادثة محفوظة مؤقتاً أثناء بقاء هذه الشاشة مفتوحة.")
         }
     }
 }
@@ -107,25 +136,44 @@ private fun completeLocalChat(
     baseUrl: String,
     modelId: String,
     apiKey: String,
-    prompt: String
+    history: List<LocalChatTurn>
 ): String {
     val parsed = URL(baseUrl)
     val host = parsed.host.lowercase()
-    if (parsed.protocol != "http" || host !in setOf("127.0.0.1", "localhost", "::1")) {
-        throw IOException("يسمح هذا الإصدار باتصال محلي فقط: 127.0.0.1 أو localhost.")
+    if (
+        parsed.protocol != "http" ||
+        host !in setOf("127.0.0.1", "localhost", "::1", "[::1]") ||
+        parsed.userInfo != null ||
+        parsed.query != null ||
+        parsed.ref != null
+    ) {
+        throw IOException("يسمح هذا الإصدار بخادم محلي فقط: 127.0.0.1 أو localhost أو ::1.")
     }
-    val connection = (URL("$baseUrl/chat/completions").openConnection() as HttpURLConnection).apply {
+
+    val endpointPath = parsed.path.trimEnd('/') + "/chat/completions"
+    val endpoint = URL(parsed.protocol, parsed.host, parsed.port, endpointPath)
+    val connection = (endpoint.openConnection() as HttpURLConnection).apply {
         requestMethod = "POST"
         connectTimeout = 10000
         readTimeout = 120000
         doOutput = true
-        setRequestProperty("Authorization", "Bearer $apiKey")
         setRequestProperty("Content-Type", "application/json")
+        if (apiKey.isNotBlank()) {
+            setRequestProperty("Authorization", "Bearer $apiKey")
+        }
     }
     try {
+        val messages = JSONArray()
+        history.forEach { turn ->
+            messages.put(
+                JSONObject()
+                    .put("role", turn.role)
+                    .put("content", turn.content)
+            )
+        }
         val body = JSONObject()
             .put("model", modelId)
-            .put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", prompt)))
+            .put("messages", messages)
             .put("stream", false)
             .toString()
             .toByteArray(Charsets.UTF_8)
@@ -136,7 +184,9 @@ private fun completeLocalChat(
         if (status !in 200..299) {
             val detail = try {
                 JSONObject(responseText).optString("error", responseText)
-            } catch (_: Exception) { responseText }
+            } catch (_: Exception) {
+                responseText
+            }
             throw IOException("HTTP $status: $detail")
         }
         val content = JSONObject(responseText)
@@ -144,7 +194,7 @@ private fun completeLocalChat(
             .getJSONObject(0)
             .getJSONObject("message")
             .optString("content")
-        if (content.isBlank()) throw IOException("أعاد النموذج رداً فارغاً.")
+        if (content.isBlank()) throw IOException("أعاد الخادم رداً فارغاً.")
         return content
     } finally {
         connection.disconnect()
