@@ -41,6 +41,65 @@ private val Paper = Color(0xFFF5F3EF)
 private val Red = Color(0xFFD94B45)
 private val Muted = Color(0xFF77736E)
 
+@Composable
+private fun AssistantReviewPanel(accessToken: String, enabled: Boolean) {
+    val scope = rememberCoroutineScope()
+    var question by remember { mutableStateOf("") }
+    var contextText by remember { mutableStateOf("") }
+    var answer by remember { mutableStateOf("مساعد استشاري فقط: لا ينفّذ أوامر ولا يغيّر الملفات.") }
+    var busy by remember { mutableStateOf(false) }
+
+    Card(shape = RoundedCornerShape(18.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("مساعد الأمن السيبراني", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            Text("تحليل وتوصيات دفاعية عبر الخادم. لا يمتلك صلاحية تشغيل الأدوات أو تعديل الملفات.")
+            if (!enabled) {
+                Text("المساعد السحابي غير مفعّل: يحتاج الخادم إلى مفتاح OpenRouter اختيارياً. استخدم المحادثة المحلية أعلاه عند توفر خادم استدلال محلي.")
+            } else {
+                OutlinedTextField(
+                    value = question,
+                    onValueChange = { question = it },
+                    label = { Text("سؤالك الأمني") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2
+                )
+                OutlinedTextField(
+                    value = contextText,
+                    onValueChange = { contextText = it },
+                    label = { Text("سياق أو مقتطفات (اختياري)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2
+                )
+                Button(
+                    enabled = !busy && question.trim().length >= 5,
+                    onClick = {
+                        val q = question.trim()
+                        val ctx = contextText.trim()
+                        busy = true
+                        scope.launch {
+                            try {
+                                val result = withContext(Dispatchers.IO) {
+                                    Api.assistantReview(accessToken, q, ctx)
+                                }
+                                answer = result.optString("answer", "لم يُرجع الخادم إجابة.")
+                                question = ""
+                            } catch (error: Exception) {
+                                answer = "تعذر الحصول على استشارة: ${error.message ?: "خطأ غير معروف"}"
+                            } finally {
+                                busy = false
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (busy) "جارٍ التحليل..." else "إرسال للاستشارة")
+                }
+            }
+            Text(if (busy) "جارٍ انتظار النموذج..." else answer)
+        }
+    }
+}
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -113,6 +172,22 @@ private object Api {
 
     fun job(token: String, id: String): JSONObject =
         request("GET", "$API_BASE/v1/jobs/$id", mapOf("Authorization" to "Bearer $token"))
+
+    fun assistantReview(token: String, question: String, context: String): JSONObject {
+        val body = JSONObject()
+            .put("question", question)
+            .put("context", context)
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+        return request(
+            "POST",
+            "$API_BASE/v1/assistant/review",
+            mapOf("Authorization" to "Bearer $token", "Accept" to "application/json"),
+            body,
+            "application/json"
+        )
+    }
+
 }
 
 @Composable
@@ -121,6 +196,7 @@ fun SecurityLabApp() {
     val scope = rememberCoroutineScope()
     var supabaseUrl by remember { mutableStateOf("") }
     var publishableKey by remember { mutableStateOf("") }
+    var aiEnabled by remember { mutableStateOf(false) }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var authorizationNote by remember { mutableStateOf("") }
@@ -139,6 +215,7 @@ fun SecurityLabApp() {
             val config = withContext(Dispatchers.IO) { Api.config() }
             supabaseUrl = config.getString("supabase_url")
             publishableKey = config.getString("supabase_publishable_key")
+            aiEnabled = config.optBoolean("ai_enabled", false)
             message = "اتصال API جاهز. سجّل الدخول للبدء."
         } catch (e: Exception) {
             message = "تعذر الاتصال بـ API: ${e.message}"
@@ -230,6 +307,8 @@ fun SecurityLabApp() {
                         }
                     }
                 } else {
+                    AssistantReviewPanel(accessToken = accessToken!!, enabled = aiEnabled)
+
                     Card(shape = RoundedCornerShape(18.dp)) {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text("الحساب: $userEmail", fontWeight = FontWeight.Bold)
