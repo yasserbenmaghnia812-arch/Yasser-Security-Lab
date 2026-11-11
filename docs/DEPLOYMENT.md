@@ -58,13 +58,9 @@ The workflow `.github/workflows/android-apk.yml` builds a **Debug** APK for test
 
 The application requires Android 10 (API 29) or newer. The loopback-only HTTP exception is used only for an optional local inference endpoint at `127.0.0.1` or `localhost`; external cleartext traffic remains disabled.
 
-## Not yet provisioned or integrated
-
+## Local Android services\n\nThe Replicate MCP bridge is a separate Termux process, not a Render service. Install it using `mcp-bridge/setup-termux.sh`, keep it bound to `127.0.0.1:8765`, and enter only its generated bridge token in the Android app. The actual Replicate API token stays in the Termux-only `.env` file. Replicate model predictions may be billable. Do not expose this local bridge to the public internet.\n\nFor local inference, `scripts/setup-local-ai-termux.sh` builds `llama-server` and downloads the Qwen2.5-Coder-0.5B Q4_0 GGUF model. Start the server on `127.0.0.1:11434`; the APK only connects to it and does not contain model weights. The 0.5B model is a low-memory starter, not a strong autonomous coding model.\n\n## Not yet provisioned or integrated\n
 - Render deployment and secret values still need to be configured in the selected Render workspace.
-- Replica MCP has no endpoint, transport, or credentials in this repository, so it is not connected.
-- The local chat panel does not embed a model runtime; it needs a local OpenAI-compatible inference server.
-- The advisory AI endpoint does not execute code, edit files, or start tools.
-- Ghidra, Androguard, APKLeaks, and radare2 are not part of the verified API-triggered APK upload workflow.
+- Replicate MCP is implemented as a local Termux bridge but requires a user-owned Replicate API token and physical-device connection test.\n- The local chat panel does not embed model weights; it needs the Termux llama.cpp server to be installed and running.\n- The advisory AI endpoint does not execute code. The separate task agent can only dispatch the allowlisted API test and Android debug build jobs after an explicit per-task approval; general source editing is not enabled.\n- Ghidra, Androguard, APKLeaks, and radare2 are not part of the verified API-triggered APK upload workflow.
 
 ## Validation checklist
 
