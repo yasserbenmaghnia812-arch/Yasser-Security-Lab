@@ -656,3 +656,125 @@ def job_status(job_id: str, user: dict[str, Any] = Depends(current_user)):
     job = _get_job(job_id, user["id"])
     run = _find_github_run(job_id, job["mode"]) if job["mode"] in {"static", "reverse_engineering"} else None
     return _sync_job_status(job, run)
+
+
+# Approval-gated agent tasks. The agent may propose only; execution requires a
+# separate authenticated approval request and is restricted to the static suite.
+class AgentTaskProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    asset_id: str = Field(min_length=8, max_length=80)
+    action: str = Field(pattern="^full-static-suite$")
+    objective: str = Field(min_length=8, max_length=1000)
+
+
+@app.post("/v1/agent/tasks")
+def propose_agent_task(proposal: AgentTaskProposal, user: dict[str, Any] = Depends(current_user)):
+    asset = load_authorized_asset(proposal.asset_id, user["id"])
+    _assert_asset_authorized(asset, Mode.static)
+    if asset.get("asset_type") != "source":
+        raise HTTPException(status_code=400, detail="The coding agent currently accepts authorized source-repository assets only.")
+    url, _, service_key = _config()
+    payload = {
+        "workspace_id": asset["workspace_id"],
+        "asset_id": asset["id"],
+        "requested_by": user["id"],
+        "action": proposal.action,
+        "objective": proposal.objective.strip(),
+        "status": "proposed",
+    }
+    try:
+        response = httpx.post(
+            f"{url}/rest/v1/agent_tasks",
+            json=payload,
+            headers=_service_headers(service_key, "return=representation"),
+            timeout=15.0,
+        )
+        response.raise_for_status()
+        rows = response.json()
+        if not rows:
+            raise HTTPException(status_code=503, detail="The agent proposal was not saved.")
+        _audit(asset["workspace_id"], user["id"], rows[0]["id"], "agent_task_proposed")
+        return {
+            "task": rows[0],
+            "execution_started": False,
+            "approval_required": True,
+            "message": "The task is only a proposal. Review it and explicitly approve it before execution.",
+        }
+    except HTTPException:
+        raise
+    except httpx.HTTPError:
+        raise HTTPException(status_code=503, detail="Could not save the agent proposal.")
+
+
+@app.post("/v1/agent/tasks/{task_id}/approve")
+def approve_agent_task(task_id: str, user: dict[str, Any] = Depends(current_user)):
+    url, _, service_key = _config()
+    headers = _service_headers(service_key)
+    try:
+        response = httpx.get(
+            f"{url}/rest/v1/agent_tasks",
+            params={"id": f"eq.{task_id}", "requested_by": f"eq.{user['id']}", "select": "id,workspace_id,asset_id,action,objective,status", "limit": "1"},
+            headers=headers,
+            timeout=10.0,
+        )
+        response.raise_for_status()
+        rows = response.json()
+        if not rows:
+            raise HTTPException(status_code=404, detail="Agent task was not found.")
+        task = rows[0]
+        if task["status"] != "proposed":
+            raise HTTPException(status_code=409, detail="This task is no longer awaiting approval.")
+        if task["action"] != "full-static-suite":
+            raise HTTPException(status_code=403, detail="This agent action is not in the approved execution allowlist.")
+        asset = load_authorized_asset(task["asset_id"], user["id"])
+        _assert_asset_authorized(asset, Mode.static)
+        if asset.get("asset_type") != "source":
+            raise HTTPException(status_code=400, detail="The approved task no longer points to a source asset.")
+        claim = httpx.patch(
+            f"{url}/rest/v1/agent_tasks",
+            params={"id": f"eq.{task_id}", "requested_by": f"eq.{user['id']}", "status": "eq.proposed"},
+            json={"status": "approved", "approved_by": user["id"], "approved_at": datetime.now(timezone.utc).isoformat()},
+            headers=_service_headers(service_key, "return=representation"),
+            timeout=10.0,
+        )
+        claim.raise_for_status()
+        if not claim.json():
+            raise HTTPException(status_code=409, detail="The task was already approved or changed by another request.")
+        job_plan = JobPlan(
+            asset_id=task["asset_id"],
+            tool_key="full-static-suite",
+            mode=Mode.static,
+            user_approved=True,
+            parameters={"agent_task_id": task_id, "objective": task["objective"]},
+        )
+        record = _insert_job(job_plan, asset, user["id"])
+        try:
+            _dispatch_static(record["id"])
+        except HTTPException:
+            httpx.patch(
+                f"{url}/rest/v1/agent_tasks",
+                params={"id": f"eq.{task_id}"},
+                json={"status": "failed"},
+                headers=_service_headers(service_key, "return=minimal"),
+                timeout=10.0,
+            )
+            raise
+        httpx.patch(
+            f"{url}/rest/v1/agent_tasks",
+            params={"id": f"eq.{task_id}"},
+            json={"status": "queued", "analysis_job_id": record["id"]},
+            headers=_service_headers(service_key, "return=minimal"),
+            timeout=10.0,
+        ).raise_for_status()
+        _audit(task["workspace_id"], user["id"], task_id, "agent_task_approved_and_dispatched")
+        return {
+            "task_id": task_id,
+            "job_id": record["id"],
+            "status": "queued",
+            "execution_started": True,
+            "message": "Your explicit approval was recorded and the approved static-analysis workflow was dispatched.",
+        }
+    except HTTPException:
+        raise
+    except httpx.HTTPError:
+        raise HTTPException(status_code=503, detail="Could not approve or dispatch this agent task.")
