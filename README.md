@@ -1,55 +1,50 @@
 # Yasser Security Lab
 
-Arabic-first, permission-first Android security workbench. The repository contains an Android client, a FastAPI service, Supabase schema, and GitHub Actions workflows for static source checks and authorized APK analysis.
+Arabic-first Android security workbench built with Kotlin, Jetpack Compose, FastAPI, Supabase, and GitHub Actions.
 
-> **Current verified status (2026-11-11):** the Android Debug APK builds successfully in GitHub Actions; the API unit tests pass; the Supabase project is active, its core tables have RLS enabled, and its private `apk-uploads` bucket is present. The self-test APK workflow completed Apktool, partial JADX decompilation, and MobSF static analysis; its report artifact is available from the linked Actions run. Cloud API availability and the APK upload-to-remote-analysis path still require a configured/deployed Render service and GitHub Actions credentials. No successful real-user APK upload has yet been verified.
+## Implemented
 
-## Included
+- Authenticated Android app with Arabic RTL UI, Supabase sign-in, APK upload, and job status polling.
+- Private APK storage and isolated GitHub Actions analysis using Apktool, JADX, and MobSF.
+- Approved static source analysis with Semgrep, Gitleaks, Trivy, Checkov, Syft, Grype, YARA, and ClamAV.
+- FastAPI service with Supabase ownership checks, scope validation, audit events, and advisory AI.
+- Persistent approval-gated agent proposals for the fixed static-analysis workflow.
+- Bounded agent tasks for API tests and Android Debug APK builds. Every execution requires explicit per-task approval.
+- Replica MCP connection through the authenticated API. The remote MCP token stays in Render; the Android client never receives it. Every MCP tool call requires a separate approval.
+- Optional on-device local coding model through llama.cpp in Termux. The APK does not bundle model weights.
 
-- Android client: Kotlin, Jetpack Compose, Arabic RTL login and APK upload/status UI.
-- Per-operation authorization: the user attests repository ownership, confirms each static scan separately, and confirms every APK upload. The API enforces per-scan and per-upload confirmation server-side.
-- APK workflow: private Supabase Storage upload, short-lived signed URL, isolated GitHub Actions runner, Apktool/JADX decompilation and MobSF static scan.
-- Static source workflow: one explicit full-suite action that runs all 8 source-analysis tools (Semgrep, Gitleaks, Trivy, Checkov, Syft, Grype, YARA, ClamAV).
-- API: FastAPI with Supabase Auth, tenant-owned workspaces, server-side asset authorization, audit events, and an advisory-only OpenRouter endpoint.
-- Local chat panel: loopback-only OpenAI-compatible inference endpoint. `scripts/setup-local-ai-termux.sh` builds llama.cpp and downloads the 0.5B Qwen2.5-Coder GGUF model for on-device inference. The APK does not bundle model weights.\n- Replicate MCP: `mcp-bridge/` contains a loopback-only Termux bridge to the official `replicate-mcp` stdio server. The Android panel discovers tools and requires explicit approval before each call. Replicate predictions may incur charges.\n- Approved task agent: `POST /v1/agent/plan` previews two bounded tasks; `POST /v1/agent/execute` requires explicit approval before GitHub Actions runs API tests or builds a debug APK. It does not accept arbitrary shell commands or perform autonomous source edits.\n
-## Not yet integrated or verified
+## Local AI on Android
 
-- Replicate MCP: local Termux bridge and Android approval UI are implemented in the feature branch; actual connection still requires a user-owned Replicate token and an on-device test.\n- General-purpose autonomous code editing: not implemented. The bounded task agent can only run the predefined API-test and Android-debug-build workflows after explicit approval.\n- Offline LLM: model weights are not bundled in the APK; the Termux setup script provides the supported llama.cpp/Qwen2.5-Coder local runtime. Device-side inference has not yet been tested on physical hardware.\n- Ghidra, Androguard, APKLeaks, and radare2: catalogued, but not part of the verified API-triggered APK pipeline.
-- Active network tools: remain in separate approval-gated workflows; they are not dispatched from the Android API.
-- Cloud deployment: Render service state and required server secrets have not been verified in this session.
+Run the setup script from the repository in Termux:
 
-## Architecture
+    bash scripts/setup-local-ai-termux.sh
 
-- `app/`: Kotlin + Jetpack Compose client.
-- `api/`: Python FastAPI orchestration and authentication.
-- `worker/`: isolated typed-job runner scaffolding; it does not accept arbitrary shell commands.
-- `supabase/migrations/`: Postgres schema and RLS policies.
-- `.github/workflows/`: Android build, API tests, source scans, and APK analysis.
-- `docs/`: tool catalogue, deployment notes, and security guidance.
+It builds llama.cpp and downloads the Qwen2.5-Coder 0.5B Q4_0 GGUF model. Start the local server using the command printed by the script. In the app, use:
+
+- URL: `http://127.0.0.1:11434/v1`
+- Model: `yasser-coder-0.5b`
+
+This is a small local assistant suitable as a starting point for a 4 GB RAM device. Build time and inference speed depend on available memory, heat, and CPU load.
+
+## Replica MCP
+
+The app calls `GET /v1/replica/tools` and `POST /v1/replica/call` through the FastAPI service. The API connects to the existing Streamable HTTP server at `https://replica-mcp-server-dfj0.onrender.com/mcp` using a server-only bearer token. The MCP server now rejects unauthenticated calls.
+
+The API exposes an allowlist of Replica tools. `workspace_run` accepts only exact safe command forms; arbitrary shell commands are rejected. All tool calls require explicit approval from the signed-in user.
+
+## Approval-gated API
+
+- `POST /v1/agent/plan`: preview API-test or Android Debug APK task.
+- `POST /v1/agent/execute`: run one allowlisted task only with `user_approved=true`.
+- `POST /v1/agent/tasks`: save a static-analysis task proposal; does not execute.
+- `POST /v1/agent/tasks/{task_id}/approve`: recheck asset ownership and authorization, then dispatch the approved static scan.
 
 ## Build and test
 
-- Debug APK: `.github/workflows/android-apk.yml` (ready for device testing; debug-signed and debuggable).
-- Signed Release APK: `.github/workflows/android-release.yml` (non-debuggable; requires your own persistent release keystore in four protected GitHub Actions secrets: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`). This release workflow has not yet been run because the private signing keystore is not configured.
+- Android Debug APK: GitHub Actions → Android Debug APK → latest successful run → Artifacts.
+- API tests: `cd api && pip install -r requirements.txt && pytest -q`.
+- APK analysis: upload only APKs you own or are authorized to assess, with explicit confirmation.
 
-Android Debug APK:
+## Safety
 
-    GitHub → Actions → Android Debug APK → latest successful run → Artifacts
-
-API tests:
-
-    cd api
-    pip install -r requirements.txt
-    pytest -q
-
-APK self-test:
-
-    GitHub → Actions → Analyze the YSL debug APK
-
-The APK self-test builds this project's own debug APK, runs Apktool and JADX, attempts a MobSF static scan, and uploads logs/reports as an artifact. JADX may report partial decompilation for obfuscated or unsupported bytecode; its exit code and extracted-source count are retained separately from Apktool and MobSF results.
-
-## Security model
-
-Only analyze files, apps, repositories, and targets you own or are explicitly authorized to assess. No stealth, persistence, credential theft, destructive payloads, unauthorized exploitation, or autonomous exploitation. Active/high-impact operations require separate approval and bounded scope.
-
-Never commit secrets. Keep the Supabase service-role key, GitHub token, and any AI provider key on the server only. Read `api/README.md` and `docs/DEPLOYMENT.md` before deployment.
+No arbitrary shell endpoint, exploit runner, stealth behavior, or autonomous source edits are exposed. Replica workspace writes and commands require explicit approval and remain constrained to the MCP server's isolated workspace. Keep Supabase service-role, GitHub, and Replica MCP tokens on the server only.
