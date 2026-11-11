@@ -280,7 +280,7 @@ def test_apk_upload_requires_valid_filename_and_authorization(monkeypatch):
     authenticated_user()
     response = client.post(
         "/v1/apks/upload?file_name=not-a-file.txt&authorization_note=I own this application and authorize testing.",
-        content=b"PK\\x03\\x04test",
+        content=bytes.fromhex("504b0304") + b"test",
         headers={"Content-Type":"application/octet-stream"},
     )
     assert response.status_code == 400
@@ -290,7 +290,7 @@ def test_apk_upload_requires_authorization_note(monkeypatch):
     authenticated_user()
     response = client.post(
         "/v1/apks/upload?file_name=sample.apk&authorization_note=short",
-        content=b"PK\\x03\\x04test",
+        content=bytes.fromhex("504b0304") + b"test",
         headers={"Content-Type":"application/octet-stream"},
     )
     assert response.status_code == 400
@@ -337,7 +337,7 @@ def test_apk_upload_stores_private_asset_and_dispatches_analysis(monkeypatch):
 
     response = client.post(
         "/v1/apks/upload?file_name=sample.apk&authorization_note=I+own+this+APK+and+authorize+static+security+analysis.",
-        content=b"PK\\x03\\x04sample-apk-bytes",
+        content=bytes.fromhex("504b0304") + b"sample-apk-bytes",
         headers={"Content-Type": "application/vnd.android.package-archive"},
     )
     assert response.status_code == 200
