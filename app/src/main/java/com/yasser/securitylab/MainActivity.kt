@@ -100,6 +100,135 @@ private fun AssistantReviewPanel(accessToken: String, enabled: Boolean) {
     }
 }
 
+@Composable
+private fun StaticScanPanel(
+    accessToken: String,
+    onJobQueued: (String) -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    val availableTools = listOf(
+        "semgrep", "gitleaks", "trivy", "checkov",
+        "syft", "grype", "yara", "clamav"
+    )
+    var authorizationNote by remember { mutableStateOf("") }
+    var ownershipConfirmed by remember { mutableStateOf(false) }
+    var assetId by remember { mutableStateOf("") }
+    var selectedTool by remember { mutableStateOf("semgrep") }
+    var menuExpanded by remember { mutableStateOf(false) }
+    var scanConfirmed by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf("سجّل ملكية المستودع أولاً، ثم أكّد كل فحص على حدة.") }
+
+    Card(shape = RoundedCornerShape(18.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("فحص المستودع — 8 أدوات ثابتة", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            Text("النطاق محدد بمستودعك: yasserbenmaghnia812-arch/Yasser-Security-Lab. لا توجد فحوص شبكية أو استغلال هنا.")
+            OutlinedTextField(
+                value = authorizationNote,
+                onValueChange = { authorizationNote = it },
+                label = { Text("سبب الملكية أو الإذن") },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 2
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(
+                    checked = ownershipConfirmed,
+                    onCheckedChange = { ownershipConfirmed = it }
+                )
+                Text("أؤكد ملكيتي للمستودع أو امتلاكي إذناً بفحصه.")
+            }
+            Button(
+                enabled = !busy && authorizationNote.trim().length >= 12 && ownershipConfirmed,
+                onClick = {
+                    busy = true
+                    status = "جارٍ تسجيل نطاق المستودع المصرّح..."
+                    scope.launch {
+                        try {
+                            val result = withContext(Dispatchers.IO) {
+                                Api.registerSourceAsset(accessToken, authorizationNote.trim())
+                            }
+                            assetId = result.optString("asset_id")
+                            status = if (assetId.isNotBlank()) {
+                                "تم تسجيل المستودع. صلاحية النطاق محدودة وفق إعدادات الخادم."
+                            } else {
+                                "لم يُرجع الخادم معرّف النطاق."
+                            }
+                        } catch (error: Exception) {
+                            status = "تعذر تسجيل المستودع: ${error.message ?: "خطأ غير معروف"}"
+                        } finally {
+                            ownershipConfirmed = false
+                            busy = false
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (busy) "جارٍ التسجيل..." else "تسجيل المستودع المصرّح")
+            }
+            Box {
+                OutlinedButton(
+                    enabled = assetId.isNotBlank() && !busy,
+                    onClick = { menuExpanded = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("الأداة المحددة: $selectedTool")
+                }
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false }
+                ) {
+                    availableTools.forEach { key ->
+                        DropdownMenuItem(
+                            text = { Text(key) },
+                            onClick = {
+                                selectedTool = key
+                                menuExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(
+                    checked = scanConfirmed,
+                    onCheckedChange = { scanConfirmed = it }
+                )
+                Text("أوافق على تشغيل أداة $selectedTool الآن على المستودع المسجل.")
+            }
+            Button(
+                enabled = !busy && assetId.isNotBlank() && scanConfirmed,
+                onClick = {
+                    busy = true
+                    status = "جارٍ إرسال طلب الفحص إلى GitHub Actions..."
+                    scope.launch {
+                        try {
+                            val result = withContext(Dispatchers.IO) {
+                                Api.dispatchStaticScan(accessToken, assetId, selectedTool)
+                            }
+                            val id = result.optString("job_id")
+                            if (id.isBlank()) {
+                                status = result.optString("message", "لم يُرجع الخادم رقم المهمة.")
+                            } else {
+                                status = "تم إرسال المهمة. رقمها: $id"
+                                onJobQueued(id)
+                            }
+                        } catch (error: Exception) {
+                            status = "تعذر تشغيل الفحص: ${error.message ?: "خطأ غير معروف"}"
+                        } finally {
+                            scanConfirmed = false
+                            busy = false
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (busy) "جارٍ الإرسال..." else "تشغيل $selectedTool")
+            }
+            Text(status, color = Muted, fontSize = 12.sp)
+        }
+    }
+}
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -182,6 +311,39 @@ private object Api {
         return request(
             "POST",
             "$API_BASE/v1/assistant/review",
+            mapOf("Authorization" to "Bearer $token", "Accept" to "application/json"),
+            body,
+            "application/json"
+        )
+    }
+
+    fun registerSourceAsset(token: String, note: String): JSONObject {
+        val body = JSONObject()
+            .put("workspace_name", "Yasser Security Lab")
+            .put("authorization_confirmed", true)
+            .put("authorization_note", note)
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+        return request(
+            "POST",
+            "$API_BASE/v1/assets/register",
+            mapOf("Authorization" to "Bearer $token", "Accept" to "application/json"),
+            body,
+            "application/json"
+        )
+    }
+
+    fun dispatchStaticScan(token: String, assetId: String, toolKey: String): JSONObject {
+        val body = JSONObject()
+            .put("asset_id", assetId)
+            .put("tool_key", toolKey)
+            .put("mode", "static")
+            .put("parameters", JSONObject())
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+        return request(
+            "POST",
+            "$API_BASE/v1/jobs/dispatch",
             mapOf("Authorization" to "Bearer $token", "Accept" to "application/json"),
             body,
             "application/json"
@@ -307,6 +469,14 @@ fun SecurityLabApp() {
                         }
                     }
                 } else {
+                    StaticScanPanel(
+                        accessToken = accessToken!!,
+                        onJobQueued = { id ->
+                            jobId = id
+                            jobStatus = "queued"
+                            reportUrl = ""
+                        }
+                    )
                     AssistantReviewPanel(accessToken = accessToken!!, enabled = aiEnabled)
 
                     Card(shape = RoundedCornerShape(18.dp)) {
