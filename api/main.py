@@ -1,6 +1,8 @@
+import asyncio
 import logging
 import os
 import re
+import uuid
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
@@ -10,6 +12,8 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
 
 from tool_registry import TOOL_REGISTRY, public_tool_catalog
 
@@ -739,3 +743,258 @@ def job_status(job_id: str, user: dict[str, Any] = Depends(current_user)):
     job = _get_job(job_id, user["id"])
     run = _find_github_run(job_id, job["mode"]) if job["mode"] in {"static", "reverse_engineering"} else None
     return _sync_job_status(job, run)
+
+
+# Persistent, approval-gated agent tasks for authorized static analysis.
+class AgentTaskProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    asset_id: str = Field(min_length=8, max_length=80)
+    action: str = Field(pattern="^full-static-suite$")
+    objective: str = Field(min_length=8, max_length=1000)
+
+
+@app.post("/v1/agent/tasks")
+def propose_agent_task(proposal: AgentTaskProposal, user: dict[str, Any] = Depends(current_user)):
+    asset = load_authorized_asset(proposal.asset_id, user["id"])
+    _assert_asset_authorized(asset, Mode.static)
+    if asset.get("asset_type") != "source":
+        raise HTTPException(status_code=400, detail="Only authorized source-repository assets are accepted.")
+    url, _, service_key = _config()
+    payload = {
+        "workspace_id": asset["workspace_id"],
+        "asset_id": asset["id"],
+        "requested_by": user["id"],
+        "action": proposal.action,
+        "objective": proposal.objective.strip(),
+        "status": "proposed",
+    }
+    try:
+        response = httpx.post(
+            f"{url}/rest/v1/agent_tasks",
+            json=payload,
+            headers=_service_headers(service_key, "return=representation"),
+            timeout=15.0,
+        )
+        response.raise_for_status()
+        rows = response.json()
+        if not rows:
+            raise HTTPException(status_code=503, detail="The agent proposal was not saved.")
+        _audit(asset["workspace_id"], user["id"], rows[0]["id"], "agent_task_proposed")
+        return {
+            "task": rows[0],
+            "execution_started": False,
+            "approval_required": True,
+            "message": "Proposal saved. No workflow starts until you explicitly approve it.",
+        }
+    except HTTPException:
+        raise
+    except httpx.HTTPError:
+        raise HTTPException(status_code=503, detail="Could not save the agent proposal.")
+
+
+@app.post("/v1/agent/tasks/{task_id}/approve")
+def approve_agent_task(task_id: str, user: dict[str, Any] = Depends(current_user)):
+    url, _, service_key = _config()
+    try:
+        response = httpx.get(
+            f"{url}/rest/v1/agent_tasks",
+            params={
+                "id": f"eq.{task_id}",
+                "requested_by": f"eq.{user['id']}",
+                "select": "id,workspace_id,asset_id,action,objective,status",
+                "limit": "1",
+            },
+            headers=_service_headers(service_key),
+            timeout=10.0,
+        )
+        response.raise_for_status()
+        rows = response.json()
+        if not rows:
+            raise HTTPException(status_code=404, detail="Agent task was not found.")
+        task = rows[0]
+        if task["status"] != "proposed":
+            raise HTTPException(status_code=409, detail="This task is no longer awaiting approval.")
+        if task["action"] != "full-static-suite":
+            raise HTTPException(status_code=403, detail="This action is not in the execution allowlist.")
+        asset = load_authorized_asset(task["asset_id"], user["id"])
+        _assert_asset_authorized(asset, Mode.static)
+        if asset.get("asset_type") != "source":
+            raise HTTPException(status_code=400, detail="The task no longer points to a source asset.")
+        claim = httpx.patch(
+            f"{url}/rest/v1/agent_tasks",
+            params={"id": f"eq.{task_id}", "requested_by": f"eq.{user['id']}", "status": "eq.proposed"},
+            json={
+                "status": "approved",
+                "approved_by": user["id"],
+                "approved_at": datetime.now(timezone.utc).isoformat(),
+            },
+            headers=_service_headers(service_key, "return=representation"),
+            timeout=10.0,
+        )
+        claim.raise_for_status()
+        if not claim.json():
+            raise HTTPException(status_code=409, detail="The task was already approved or changed.")
+        job = JobPlan(
+            asset_id=task["asset_id"],
+            tool_key="full-static-suite",
+            mode=Mode.static,
+            user_approved=True,
+            parameters={"agent_task_id": task_id, "objective": task["objective"]},
+        )
+        record = _insert_job(job, asset, user["id"])
+        try:
+            _dispatch_static(record["id"])
+        except HTTPException:
+            httpx.patch(
+                f"{url}/rest/v1/agent_tasks",
+                params={"id": f"eq.{task_id}"},
+                json={"status": "failed"},
+                headers=_service_headers(service_key, "return=minimal"),
+                timeout=10.0,
+            )
+            raise
+        httpx.patch(
+            f"{url}/rest/v1/agent_tasks",
+            params={"id": f"eq.{task_id}"},
+            json={"status": "queued", "analysis_job_id": record["id"]},
+            headers=_service_headers(service_key, "return=minimal"),
+            timeout=10.0,
+        ).raise_for_status()
+        _audit(task["workspace_id"], user["id"], task_id, "agent_task_approved_and_dispatched")
+        return {"task_id": task_id, "job_id": record["id"], "status": "queued", "execution_started": True}
+    except HTTPException:
+        raise
+    except httpx.HTTPError:
+        raise HTTPException(status_code=503, detail="Could not approve or dispatch this agent task.")
+
+
+# Server-to-server Replica MCP bridge. The MCP bearer token is never sent to Android.
+REPLICA_TOOL_ALLOWLIST = {
+    "replica_server_info",
+    "replica_list_skills",
+    "replica_get_skill",
+    "replica_list_utilities",
+    "workspace_list",
+    "workspace_read",
+    "workspace_mkdir",
+    "workspace_write",
+    "workspace_stat",
+    "workspace_run",
+    "replica_run_utility",
+}
+SAFE_REPLICA_COMMANDS = {
+    ("git", "status", "--short"),
+    ("git", "diff", "--stat"),
+    ("git", "diff"),
+    ("git", "log", "-5", "--oneline"),
+    ("git", "ls-files"),
+    ("pytest", "-q"),
+    ("python3", "-m", "pytest", "-q"),
+    ("npm", "test"),
+    ("npm", "run", "build"),
+    ("npm", "run", "lint"),
+    ("npm", "run", "typecheck"),
+}
+
+
+class ReplicaToolCall(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tool_name: str = Field(min_length=1, max_length=100)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    user_approved: bool = False
+
+
+def _replica_config() -> tuple[str, str]:
+    endpoint = os.getenv("REPLICA_MCP_URL", "https://replica-mcp-server-dfj0.onrender.com/mcp").strip()
+    token = os.getenv("REPLICA_MCP_BEARER_TOKEN", "")
+    if not endpoint.startswith("https://") or not token:
+        raise HTTPException(status_code=503, detail="Replica MCP server configuration is incomplete.")
+    return endpoint, token
+
+
+async def _replica_list_tools_async() -> list[dict[str, Any]]:
+    endpoint, token = _replica_config()
+    async with streamablehttp_client(
+        endpoint,
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=30,
+        sse_read_timeout=60,
+    ) as (read_stream, write_stream, _get_session_id):
+        async with ClientSession(read_stream, write_stream) as session:
+            await session.initialize()
+            result = await session.list_tools()
+            return [
+                {
+                    "name": tool.name,
+                    "description": tool.description or "",
+                    "input_schema": getattr(tool, "inputSchema", {}),
+                }
+                for tool in result.tools
+                if tool.name in REPLICA_TOOL_ALLOWLIST
+            ]
+
+
+async def _replica_call_tool_async(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    endpoint, token = _replica_config()
+    async with streamablehttp_client(
+        endpoint,
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=30,
+        sse_read_timeout=120,
+    ) as (read_stream, write_stream, _get_session_id):
+        async with ClientSession(read_stream, write_stream) as session:
+            await session.initialize()
+            result = await session.call_tool(tool_name, arguments=arguments)
+            return {
+                "is_error": bool(getattr(result, "isError", False)),
+                "content": [
+                    item.model_dump(mode="json", by_alias=True)
+                    if hasattr(item, "model_dump") else {"text": str(item)}
+                    for item in result.content
+                ],
+                "structured_content": getattr(result, "structuredContent", None),
+            }
+
+
+def _replica_list_tools() -> list[dict[str, Any]]:
+    try:
+        return asyncio.run(_replica_list_tools_async())
+    except HTTPException:
+        raise
+    except Exception:
+        logging.getLogger(__name__).exception("Replica MCP tool discovery failed")
+        raise HTTPException(status_code=502, detail="Replica MCP server could not be reached.")
+
+
+def _replica_call_tool(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return asyncio.run(_replica_call_tool_async(tool_name, arguments))
+    except HTTPException:
+        raise
+    except Exception:
+        logging.getLogger(__name__).exception("Replica MCP tool call failed: %s", tool_name)
+        raise HTTPException(status_code=502, detail="Replica MCP tool call failed.")
+
+
+@app.get("/v1/replica/tools")
+def replica_tools(user: dict[str, Any] = Depends(current_user)):
+    return {"tools": _replica_list_tools(), "approval_required_for_every_call": True}
+
+
+@app.post("/v1/replica/call")
+def replica_call(request: ReplicaToolCall, user: dict[str, Any] = Depends(current_user)):
+    if request.user_approved is not True:
+        raise HTTPException(status_code=403, detail="Explicit per-call approval is required.")
+    if request.tool_name not in REPLICA_TOOL_ALLOWLIST:
+        raise HTTPException(status_code=403, detail="This Replica MCP tool is not allowlisted.")
+    if request.tool_name == "workspace_run":
+        command = request.arguments.get("command")
+        if not isinstance(command, list) or tuple(str(part) for part in command) not in SAFE_REPLICA_COMMANDS:
+            raise HTTPException(status_code=403, detail="This project command is not in the safe command allowlist.")
+    if request.tool_name == "workspace_write":
+        content = request.arguments.get("content")
+        if not isinstance(content, str) or len(content) > 200000:
+            raise HTTPException(status_code=400, detail="Workspace writes are limited to 200 KB of text.")
+    result = _replica_call_tool(request.tool_name, request.arguments)
+    _audit(str(uuid.uuid4()), user["id"], str(uuid.uuid4()), "replica_tool_called")
+    return {"tool_name": request.tool_name, "result": result, "approval_recorded": True}
