@@ -57,12 +57,45 @@ jobs:
           PY
           unzip -q /tmp/jadx.zip -d "$HOME/tools/jadx"
       - name: Run Apktool and JADX
+        shell: bash
         env:
           APK_NAME: ${{ inputs.file_name }}
         run: |
-          apktool d -f "input/$APK_NAME" -o reports/apktool
-          "$HOME/tools/jadx/bin/jadx" --show-bad-code -d reports/jadx "input/$APK_NAME"
-          apkanalyzer manifest print "input/$APK_NAME" > reports/manifest.xml || true
+          set +e
+          mkdir -p reports/apktool reports/jadx
+          apktool --version > reports/apktool-version.txt 2>&1
+          APKTOOL_VERSION_STATUS=$?
+          apktool d -f "input/$APK_NAME" -o reports/apktool > reports/apktool.log 2>&1
+          APKTOOL_STATUS=$?
+          JADX_BIN="$HOME/tools/jadx/bin/jadx"
+          if [ -x "$JADX_BIN" ]; then
+            "$JADX_BIN" --show-bad-code -d reports/jadx "input/$APK_NAME" > reports/jadx.log 2>&1
+            JADX_STATUS=$?
+          else
+            echo "JADX executable is missing." > reports/jadx.log
+            JADX_STATUS=127
+          fi
+          APKTOOL_FILES="$(find reports/apktool -type f 2>/dev/null | wc -l)"
+          JADX_SOURCES="$(find reports/jadx -type f -name '*.java' 2>/dev/null | wc -l)"
+          {
+            echo "Apktool exit: $APKTOOL_STATUS"
+            echo "Apktool output files: $APKTOOL_FILES"
+            echo "JADX exit: $JADX_STATUS"
+            echo "JADX Java source files: $JADX_SOURCES"
+            if [ "$APKTOOL_STATUS" -eq 0 ] && [ "$APKTOOL_FILES" -gt 0 ]; then
+              echo "Apktool result: success"
+            else
+              echo "Apktool result: failed"
+            fi
+            if [ "$JADX_STATUS" -eq 0 ] && [ "$JADX_SOURCES" -gt 0 ]; then
+              echo "JADX result: success"
+            elif [ "$JADX_SOURCES" -gt 0 ]; then
+              echo "JADX result: partial (review jadx.log; some classes failed to decompile)"
+            else
+              echo "JADX result: failed"
+            fi
+          } | tee reports/decompiler-status.txt
+          # A partial decompilation must not prevent MobSF from completing its scan.
       - name: Start MobSF API-only scanner
         run: |
           key="$(openssl rand -hex 32)"
@@ -84,15 +117,23 @@ jobs:
           curl --fail -X POST --data-urlencode "hash=$hash" -H "Authorization: $MOBSF_KEY" http://127.0.0.1:8000/api/v1/report_json -o reports/mobsf-report.json
       - name: Summarize analysis outputs
         if: always()
+        env:
+          APK_NAME: ${{ inputs.file_name }}
         run: |
+          APKTOOL_FILES="$(find reports/apktool -type f 2>/dev/null | wc -l)"
+          JADX_SOURCES="$(find reports/jadx -type f -name '*.java' 2>/dev/null | wc -l)"
           {
             echo "# APK analysis"
             echo
             echo "- Job: ${{ inputs.job_id }}"
-            echo "- File: ${{ inputs.file_name }}"
-            echo "- Apktool: $([ -d reports/apktool ] && echo completed || echo unavailable)"
-            echo "- JADX: $([ -d reports/jadx ] && echo completed || echo unavailable)"
-            echo "- MobSF: $([ -s reports/mobsf-report.json ] && echo completed || echo failed)"
+            echo "- File: $APK_NAME"
+            echo "- APK SHA-256: $(cat reports/sha256.txt 2>/dev/null || echo unavailable)"
+            echo "- Apktool extracted files: $APKTOOL_FILES"
+            echo "- JADX Java files: $JADX_SOURCES"
+            echo "- MobSF JSON report: $([ -s reports/mobsf-report.json ] && echo available || echo unavailable)"
+            echo
+            echo "## Decompiler status"
+            cat reports/decompiler-status.txt 2>/dev/null || echo "Decompiler status was not recorded."
           } > reports/SUMMARY.md
       - name: Upload analysis reports
         if: always()
