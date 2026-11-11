@@ -996,5 +996,21 @@ def replica_call(request: ReplicaToolCall, user: dict[str, Any] = Depends(curren
         if not isinstance(content, str) or len(content) > 200000:
             raise HTTPException(status_code=400, detail="Workspace writes are limited to 200 KB of text.")
     result = _replica_call_tool(request.tool_name, request.arguments)
-    _audit(str(uuid.uuid4()), user["id"], str(uuid.uuid4()), "replica_tool_called")
+    try:
+        url, _, service_key = _config()
+        audit_response = httpx.post(
+            f"{url}/rest/v1/audit_events",
+            json={
+                "workspace_id": None,
+                "actor_id": user["id"],
+                "event_type": "replica_tool_called",
+                "object_id": None,
+                "details": {"tool_name": request.tool_name, "user_approved": True},
+            },
+            headers=_service_headers(service_key, "return=minimal"),
+            timeout=10.0,
+        )
+        audit_response.raise_for_status()
+    except httpx.HTTPError:
+        logging.getLogger(__name__).warning("Replica MCP audit write failed.")
     return {"tool_name": request.tool_name, "result": result, "approval_recorded": True}
