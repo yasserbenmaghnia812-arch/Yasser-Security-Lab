@@ -116,7 +116,7 @@ jobs:
           status_file = root / "decompiler-status.txt"
           status_text = status_file.read_text(errors="replace") if status_file.exists() else ""
           def number(label):
-              match = re.search(rf"^{re.escape(label)}:\\s*(\\d+)", status_text, re.M)
+              match = re.search(rf"^{re.escape(label)}:\s*(\d+)", status_text, re.M)
               return int(match.group(1)) if match else 127
 
           apktool_exit = number("Apktool exit")
@@ -150,7 +150,7 @@ jobs:
                       lines.append(f"- {section}: " + ", ".join(f"{key}={value}" for key, value in summary.items()))
           else:
               lines.append("- MobSF: report missing")
-          (root / "SUMMARY.md").write_text("\\n".join(lines) + "\\n")
+          (root / "SUMMARY.md").write_text("\n".join(lines) + "\n")
           print((root / "SUMMARY.md").read_text())
 
           if apktool_exit != 0 or apktool_files <= 0:
