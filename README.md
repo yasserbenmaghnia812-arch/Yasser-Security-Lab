@@ -7,7 +7,7 @@ Arabic-first, permission-first Android security workbench. The repository contai
 ## Included
 
 - Android client: Kotlin, Jetpack Compose, Arabic RTL login and APK upload/status UI.
-- Per-upload authorization: the user must enter an authorization note and explicitly check ownership/permission before each APK upload.
+- Per-operation authorization: the user attests repository ownership, confirms each static scan separately, and confirms every APK upload. The API enforces per-scan and per-upload confirmation server-side.
 - APK workflow: private Supabase Storage upload, short-lived signed URL, isolated GitHub Actions runner, Apktool/JADX decompilation and MobSF static scan.
 - Static source workflow: 8 source-analysis tools (Semgrep, Gitleaks, Trivy, Checkov, Syft, Grype, YARA, ClamAV).
 - API: FastAPI with Supabase Auth, tenant-owned workspaces, server-side asset authorization, audit events, and an advisory-only OpenRouter endpoint.
