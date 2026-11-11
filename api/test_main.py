@@ -85,6 +85,14 @@ def test_static_dispatch_requires_explicit_per_job_approval(monkeypatch):
     assert response.status_code == 403
 
 
+def test_individual_static_tool_dispatch_is_rejected(monkeypatch):
+    authenticated_user()
+    response = client.post("/v1/jobs/dispatch", json={
+        "asset_id": "asset-123456", "tool_key": "semgrep", "mode": "static", "user_approved": True
+    })
+    assert response.status_code == 403
+
+
 def test_static_dispatch_creates_and_dispatches_job(monkeypatch):
     authenticated_user()
     monkeypatch.setenv("GITHUB_TOKEN", "test-token")
@@ -312,7 +320,7 @@ def test_only_verified_source_and_apk_scanners_are_advertised_as_api_enabled():
     response = client.get("/v1/tools")
     tools = response.json()["tools"]
     enabled = {key for key, item in tools.items() if item["workflow_enabled"]}
-    assert enabled == {"semgrep", "gitleaks", "trivy", "checkov", "grype", "syft", "yara", "clamav", "mobsf", "jadx", "apktool"}
+    assert enabled == {"full-static-suite", "mobsf", "jadx", "apktool"}
     assert tools["nmap"]["execution_available"] is False
     assert tools["mobsf"]["execution_available"] is True
 
