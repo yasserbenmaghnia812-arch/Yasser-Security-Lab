@@ -1,81 +1,67 @@
 # Deployment guide
 
-## Components and current responsibilities
+## Existing services
 
-- **GitHub Actions:** Android Debug APK build, API unit tests, static source scanning, and authorized APK analysis.
-- **Supabase:** Auth, Postgres metadata, row-level security, and the private `apk-uploads` Storage bucket.
-- **Render:** one FastAPI web service. The repository does not currently deploy a separate worker service.
-- **Vercel:** optional browser console. The Android client calls the API directly.
-
-CPU-heavy decompilation and static APK analysis run in ephemeral GitHub Actions runners, not inside the small Render web service. Free Render instances can sleep between requests; a first request may be delayed.
+- Supabase project: `Yasser-Security-Lab`, reference `jokemrlulcvoiahfnagz`.
+- Render API: `yasser-security-lab-api-7w2p`, region Frankfurt, free plan, root directory `api`.
+- Render Replica MCP: `replica-mcp-server-dfj0`, region Frankfurt, free plan, repository `rea-ai`, root directory `replica-mcp`.
+- The Android client calls the FastAPI service. It does not hold the Replica MCP server token.
 
 ## Supabase
 
-Project reference: `jokemrlulcvoiahfnagz` (Yasser Security Lab).
+The core tables are `workspaces`, `assets`, `analysis_jobs`, `findings`, and `audit_events`. All have RLS enabled.
 
-The current project has the core tables with RLS enabled and a private `apk-uploads` bucket. Do not create a second project or rerun the initial schema migration without checking its current state.
+The approval-gated task migration creates `public.agent_tasks`, enables RLS, grants authenticated users read access to their own rows, and keeps writes server-only through the service role. It has been applied to the selected project and verified.
 
-Required tables: `workspaces`, `assets`, `analysis_jobs`, `findings`, `audit_events`.
+Never place the Supabase service-role key in Android, browser code, GitHub, or chat.
 
-The API uses the service-role key only from its server environment. Never place it in the Android app, browser bundle, GitHub repository, or chat.
+## Render API environment
 
-## Render API service
+The existing API service uses the following server-only variables:
 
-The root-level `render.yaml` defines a free Python web service:
+| Variable | Purpose |
+|---|---|
+| `SUPABASE_URL` | Supabase project URL |
+| `SUPABASE_ANON_KEY` | Publishable/anon key used for Auth validation |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server-only Postgres and private Storage operations |
+| `GITHUB_TOKEN` | Fine-grained token with Actions read/write for this repository |
+| `GITHUB_REPOSITORY` | `yasserbenmaghnia812-arch/Yasser-Security-Lab` |
+| `REPLICA_MCP_URL` | `https://replica-mcp-server-dfj0.onrender.com/mcp` |
+| `REPLICA_MCP_BEARER_TOKEN` | Server-to-server credential matching the Replica MCP service |
+| `OPENROUTER_API_KEY` | Optional server-side advisory model key |
+| `ALLOWED_ORIGINS` | Optional exact browser origins |
 
-- Root directory: `api`
-- Build: `pip install -r requirements.txt`
-- Start: `uvicorn main:app --host 0.0.0.0 --port $PORT`
-- Health check: `/health`
+Do not replace the existing environment wholesale; merge only the new Replica MCP variables. Never print or commit token values.
 
-Configure these values in the Render service Environment page:
+## Render Replica MCP environment
 
-| Variable | Required | Purpose |
-|---|---|---|
-| `SUPABASE_URL` | Yes | Supabase project URL |
-| `SUPABASE_ANON_KEY` | Yes | Supabase publishable/anon key |
-| `SUPABASE_SERVICE_ROLE_KEY` | Yes | Server-only database and private Storage operations |
-| `GITHUB_TOKEN` | Yes | Fine-grained GitHub token, Actions read/write for this repository |
-| `GITHUB_REPOSITORY` | Yes | `yasserbenmaghnia812-arch/Yasser-Security-Lab` |
-| `ALLOWED_ORIGINS` | Optional | Exact browser origins; may be empty for native-only clients |
-| `OPENROUTER_API_KEY` | Optional | Enables cloud advisory AI; it is not required for APK builds or static analysis |
-| `OPENROUTER_MODEL` | Optional | Defaults to `cohere/north-mini-code:free` |
-| `OPENROUTER_FALLBACK_MODEL` | Optional | Defaults to `nvidia/nemotron-3.5-lightning:free` |
+The Replica MCP service requires `MCP_BEARER_TOKEN`. Every `/mcp` request must present the matching Authorization Bearer header. Health remains public and does not disclose the token. The MCP server's workspace is temporary on the free plan and may be lost after restart or redeploy.
 
-The fine-grained GitHub token should be limited to this repository. Grant only the repository permissions needed to dispatch workflows and read their run status. Do not use a personal token with broad account permissions.
+## API endpoints
 
-The two default OpenRouter model routes are currently listed as free, but free routes are rate-limited and their availability can change. Requests to the provider leave your server. The API redacts several common secret formats before forwarding advisory prompts, but this is best-effort pattern matching, not a guarantee; do not submit credentials, private keys, personal data, or confidential source code to external free model endpoints.
+- `GET /health` — service health.
+- `GET /v1/config` — public Supabase URL and publishable key only.
+- `GET /v1/replica/tools` — authenticated allowlisted tool discovery.
+- `POST /v1/replica/call` — authenticated MCP tool call; requires `user_approved=true`.
+- `POST /v1/agent/plan` — preview an allowlisted task.
+- `POST /v1/agent/execute` — dispatch API tests or Debug APK build only after explicit approval.
+- `POST /v1/agent/tasks` — create a persistent static-analysis proposal without executing it.
+- `POST /v1/agent/tasks/{task_id}/approve` — revalidate scope and dispatch after explicit approval.
+- `POST /v1/apks/upload` — private authorized APK upload and analysis dispatch.
+- `GET /v1/jobs/{job_id}` — job status.
 
-## GitHub Actions
+## Android local model
 
-Ensure repository Actions are enabled. The API dispatch token needs Actions write permission and permission to read run status. Workflow jobs use short-lived GitHub-hosted runners and upload scan reports as expiring artifacts.
+Run `scripts/setup-local-ai-termux.sh` in Termux. It builds llama.cpp with two jobs and downloads the Qwen2.5-Coder 0.5B Q4_0 model. Start the server on `127.0.0.1:11434`. The app uses `http://127.0.0.1:11434/v1` and model ID `yasser-coder-0.5b`. The model is not embedded in the APK.
 
-Never add Supabase service-role keys, OpenRouter keys, or the Render API's GitHub token to an Android APK or a client-side environment.
+## Validation
 
-## Android
+1. Check Render API `/health` and `/v1/config`.
+2. Check Replica MCP `/health`; an unauthenticated POST to `/mcp` must be rejected.
+3. Sign in from Android and discover Replica MCP tools.
+4. Confirm each MCP call is blocked until its approval checkbox is selected.
+5. Confirm API-test and Debug APK agent tasks show a preview before approval.
+6. Run the API test workflow and Android Debug APK workflow.
+7. Test llama.cpp locally in Termux on the target device.
 
-The workflow `.github/workflows/android-apk.yml` builds a **Debug** APK for testing. The separate `.github/workflows/android-release.yml` builds a signed, non-debuggable Release APK when the four GitHub Actions secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD` are configured. Generate and retain your own keystore; it is required for future updates under the same Android app identity. Never commit or disclose the keystore or passwords. This release workflow has not yet been run because no private signing keystore has been configured.
-
-The application requires Android 10 (API 29) or newer. The loopback-only HTTP exception is used only for an optional local inference endpoint at `127.0.0.1` or `localhost`; external cleartext traffic remains disabled.
-
-## Not yet provisioned or integrated
-
-- Render deployment and secret values still need to be configured in the selected Render workspace.
-- Replica MCP has no endpoint, transport, or credentials in this repository, so it is not connected.
-- The local chat panel does not embed a model runtime; it needs a local OpenAI-compatible inference server.
-- The advisory AI endpoint does not execute code, edit files, or start tools.
-- Ghidra, Androguard, APKLeaks, and radare2 are not part of the verified API-triggered APK upload workflow.
-
-## Validation checklist
-
-1. Confirm Render `/health` returns `{"status":"ok"}`.
-2. Confirm `/v1/config` returns the Supabase URL, publishable key, and expected `ai_enabled` boolean without revealing server secrets.
-3. Sign in from the Android app and confirm the app obtains a valid Supabase session.
-4. Register the fixed source repository; confirm explicit approval is required for every static scan.
-5. Upload only an owned or explicitly authorized APK and confirm the upload checkbox is required each time.
-6. Verify GitHub Actions run status and download the Apktool/JADX/MobSF report artifact.
-7. Install the Debug APK on a physical Android 10+ device and test sign-in, local inference connection, AI advisory (when enabled), static scan dispatch, APK upload, and job polling.
-
-## Free-tier limitations
-
-Free cloud instances may sleep and may impose CPU, memory, execution-time, or storage quotas. They are not guaranteed to be always-on and are not a substitute for persistent workers or GPU inference. The Android local chat panel does not include a bundled model; on-device inference requires a compatible local inference server and sufficient device memory.
+Free Render instances may sleep. Free-tier workspaces are not guaranteed to be always-on or persistent. The local model requires the Termux server to be running while the app uses it.

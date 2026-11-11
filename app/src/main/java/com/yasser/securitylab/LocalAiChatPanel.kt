@@ -37,7 +37,7 @@ fun LocalAiChatPanel() {
     val scope = rememberCoroutineScope()
     var baseUrl by remember { mutableStateOf("http://127.0.0.1:11434/v1") }
     var apiKey by remember { mutableStateOf("") }
-    var modelId by remember { mutableStateOf("") }
+    var modelId by remember { mutableStateOf("yasser-coder-0.5b") }
     var prompt by remember { mutableStateOf("") }
     var conversation by remember {
         mutableStateOf(

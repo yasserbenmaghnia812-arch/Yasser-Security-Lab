@@ -12,6 +12,11 @@ Python 3.11+:
 - `POST /v1/assets/register` — registers the fixed source repository after explicit ownership/authorization attestation.
 - `GET /v1/tools` — 27-tool registry and current dispatch configuration.
 - `POST /v1/assistant/review` — authenticated defensive AI advice; never executes tools.
+- `GET /v1/replica/tools` — discovers allowlisted tools from the configured remote Replica MCP server.
+- `POST /v1/replica/call` — calls one allowlisted tool only with `user_approved=true`.
+- `POST /v1/agent/tasks` and `/approve` — stores and approves persistent static-analysis task proposals.
+- `POST /v1/agent/plan` — previews one allowlisted API-test or Android-debug-build task without starting it.
+- `POST /v1/agent/execute` — dispatches an allowlisted GitHub Actions task only with `user_approved=true`.
 - `POST /v1/jobs/plan` — authenticated scope validation; never starts a scan.
 - `POST /v1/jobs/dispatch` — dispatches an approved **static source-analysis** job to GitHub Actions.
 - `GET /v1/jobs/{job_id}` — returns job state and the matching GitHub Actions run when available.
@@ -34,6 +39,10 @@ Active network assessments are **not** dispatched through the Android API. They 
 - `SUPABASE_SERVICE_ROLE_KEY` (server-side secret; never ship to Android or Vercel browser code)
 - `GITHUB_TOKEN` (fine-grained token with Actions: read/write for this repository; never ship to the APK)
 - `OPENROUTER_API_KEY` (optional; server-side key for free open-weight advisory models)
+- `REPLICA_MCP_URL` (HTTPS Streamable HTTP endpoint for the Replica MCP server)
+- `REPLICA_MCP_BEARER_TOKEN` (server-only bearer token; never send it to Android)
+- `AGENT_WORKFLOW_REF` (optional; Git ref containing the approved-task workflow)
+- `AGENT_WORKFLOW_REF` (optional; defaults to `main` and selects the branch on which approved agent tasks run)
 - `GITHUB_REPOSITORY` (defaults to this repository)
 - `ALLOWED_ORIGINS` (comma-separated exact web origins; can remain empty for native-only clients)
 
@@ -41,7 +50,7 @@ Do not send secrets in chat or commit them to Git. Add them through Render's Env
 
 ## AI advisory model
 
-The API supports OpenRouter's free open-weight model routes. Defaults are `cohere/north-mini-code:free` with `nvidia/nemotron-3.5-lightning:free` as fallback. Both are configurable with `OPENROUTER_MODEL` and `OPENROUTER_FALLBACK_MODEL`. These routes are currently listed at $0 but are rate-limited and can change. The advisory endpoint applies best-effort redaction to common PEM keys, AWS/GitHub/Stripe credentials, Bearer tokens, JWTs, and labelled key/password assignments before forwarding prompts. This is not a complete data-loss-prevention system: do not submit passwords, private keys, personal data, or confidential source code to an external model. The assistant is advisory-only and has no tool execution permissions.
+The API supports OpenRouter's free open-weight model routes. Defaults are `cohere/north-mini-code:free` with `nvidia/nemotron-3.5-lightning:free` as fallback. Both are configurable with `OPENROUTER_MODEL` and `OPENROUTER_FALLBACK_MODEL`. These routes are currently listed at $0 but are rate-limited and can change. The advisory endpoint applies best-effort redaction to common PEM keys, AWS/GitHub/Stripe credentials, Bearer tokens, JWTs, and labelled key/password assignments before forwarding prompts. This is not a complete data-loss-prevention system: do not submit passwords, private keys, personal data, or confidential source code to an external model. The review assistant is advisory-only and has no tool execution permissions. The separate task agent is not an autonomous shell: it accepts only `api_tests` and `android_debug_apk`, previews its steps, then requires an authenticated per-task approval before dispatching `.github/workflows/agent-approved-task.yml`. It cannot execute arbitrary commands or edit source files.
 
 ## Current tool execution model
 
@@ -51,3 +60,24 @@ The API supports OpenRouter's free open-weight model routes. Defaults are `coher
 - mitmproxy is a local Termux setup documented in `docs/MITMPROXY-TERMUX.md`.
 
 No scanner accepts arbitrary shell input. Active network workflow excludes exploit, intrusive, and denial-of-service templates and uses bounded request rates.
+
+## Replica MCP
+
+The API connects to the configured HTTPS Streamable HTTP endpoint using the server-only `REPLICA_MCP_BEARER_TOKEN`. The Android client receives only its authenticated Supabase access token. Tool discovery is restricted to `REPLICA_TOOL_ALLOWLIST`; every tool call requires explicit approval. `workspace_run` accepts exact command argument lists only. `workspace_write` is limited to 200 KB per call; confirm the requested path and content before authorizing a write. The remote MCP server must enforce its own workspace-root isolation and authentication.
+
+
+## Replica MCP and approval-gated agent
+
+- `GET /v1/replica/tools` discovers the allowlisted tools from the configured Replica MCP Streamable HTTP endpoint. Requires Supabase Bearer authentication.
+- `POST /v1/replica/call` invokes one allowlisted tool and requires `user_approved=true` on every call. `workspace_run` is restricted to exact approved command forms.
+- `POST /v1/agent/plan` previews only the fixed `api_tests` and `android_debug_apk` tasks.
+- `POST /v1/agent/execute` dispatches only those fixed tasks after explicit authenticated approval.
+- `POST /v1/agent/tasks` saves a persistent static-analysis proposal without dispatching.
+- `POST /v1/agent/tasks/{task_id}/approve` rechecks user ownership and asset authorization before dispatch.
+
+Additional server-only environment variables:
+
+- `REPLICA_MCP_URL` — defaults to the existing Replica MCP service endpoint.
+- `REPLICA_MCP_BEARER_TOKEN` — service-to-service token; never expose it to Android.
+
+Apply `supabase/migrations/202611110001_agent_tasks.sql` before using persistent static-analysis proposals. The Android app never receives the Replica MCP bearer token.

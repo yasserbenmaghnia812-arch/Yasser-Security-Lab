@@ -404,3 +404,134 @@ def test_apk_upload_stores_private_asset_and_dispatches_analysis(monkeypatch):
     assert dispatched[0][0] == "job-12345678"
     assert dispatched[0][1].startswith("https://example.supabase.co/storage/v1/object/sign/")
     assert dispatched[0][2] == "sample.apk"
+
+
+def test_agent_plan_is_preview_only_and_lists_safe_tasks():
+    authenticated_user()
+    response = client.post("/v1/agent/plan", json={"task_type": "android_debug_apk"})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["requires_approval"] is True
+    assert payload["execution_enabled"] is False
+    assert "Gradle assembleDebug" in " ".join(payload["steps"])
+
+
+def test_agent_execute_requires_explicit_approval(monkeypatch):
+    authenticated_user()
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    calls = []
+    monkeypatch.setattr(main.httpx, "post", lambda *args, **kwargs: calls.append(args))
+    response = client.post("/v1/agent/execute", json={"task_type": "api_tests"})
+    assert response.status_code == 403
+    assert calls == []
+
+
+def test_agent_execute_dispatches_only_allowlisted_approved_task(monkeypatch):
+    authenticated_user()
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+
+    class Response:
+        status_code = 204
+
+    calls = []
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs["json"]))
+        return Response()
+
+    monkeypatch.setattr(main.httpx, "post", fake_post)
+    response = client.post("/v1/agent/execute", json={
+        "task_type": "api_tests",
+        "user_approved": True
+    })
+    assert response.status_code == 200
+    assert response.json()["status"] == "queued"
+    assert calls[0][1]["inputs"]["approval_confirmed"] == "true"
+    assert calls[0][1]["inputs"]["task_type"] == "api_tests"
+    assert len(calls[0][1]["inputs"]["request_id"]) == 32
+
+
+def test_agent_rejects_unknown_task_type():
+    authenticated_user()
+    response = client.post("/v1/agent/execute", json={
+        "task_type": "run_shell",
+        "user_approved": True
+    })
+    assert response.status_code == 422
+
+
+def test_persistent_agent_proposal_requires_authentication():
+    response = client.post("/v1/agent/tasks", json={
+        "asset_id": "asset-123456",
+        "action": "full-static-suite",
+        "objective": "Run defensive static checks on my repository."
+    })
+    assert response.status_code == 401
+
+
+def test_persistent_agent_proposal_rejects_unknown_actions():
+    authenticated_user()
+    response = client.post("/v1/agent/tasks", json={
+        "asset_id": "asset-123456",
+        "action": "execute-shell",
+        "objective": "Run an arbitrary shell command."
+    })
+    assert response.status_code == 422
+
+
+def test_persistent_agent_approval_requires_authentication():
+    response = client.post("/v1/agent/tasks/12345678-1234-1234-1234-123456789012/approve")
+    assert response.status_code == 401
+
+
+def test_replica_tool_discovery_requires_authentication():
+    response = client.get("/v1/replica/tools")
+    assert response.status_code == 401
+
+
+def test_replica_tool_call_requires_per_call_approval(monkeypatch):
+    authenticated_user()
+    calls = []
+    monkeypatch.setattr(main, "_replica_call_tool", lambda *args: calls.append(args))
+    response = client.post("/v1/replica/call", json={
+        "tool_name": "workspace_list",
+        "arguments": {"path": "."},
+        "user_approved": False
+    })
+    assert response.status_code == 403
+    assert calls == []
+
+
+def test_replica_tool_call_rejects_unlisted_tools(monkeypatch):
+    authenticated_user()
+    calls = []
+    monkeypatch.setattr(main, "_replica_call_tool", lambda *args: calls.append(args))
+    response = client.post("/v1/replica/call", json={
+        "tool_name": "dangerous_shell",
+        "arguments": {},
+        "user_approved": True
+    })
+    assert response.status_code == 403
+    assert calls == []
+
+
+def test_replica_workspace_run_rejects_arbitrary_commands(monkeypatch):
+    authenticated_user()
+    calls = []
+    monkeypatch.setattr(main, "_replica_call_tool", lambda *args: calls.append(args))
+    response = client.post("/v1/replica/call", json={
+        "tool_name": "workspace_run",
+        "arguments": {"command": ["python3", "-c", "import os; os.remove('x')"]},
+        "user_approved": True
+    })
+    assert response.status_code == 403
+    assert calls == []
+
+
+def test_replica_tool_discovery_returns_allowlisted_tools(monkeypatch):
+    authenticated_user()
+    expected = [{"name": "replica_server_info", "description": "Server status", "input_schema": {}}]
+    monkeypatch.setattr(main, "_replica_list_tools", lambda: expected)
+    response = client.get("/v1/replica/tools")
+    assert response.status_code == 200
+    assert response.json()["tools"] == expected
+    assert response.json()["approval_required_for_every_call"] is True
