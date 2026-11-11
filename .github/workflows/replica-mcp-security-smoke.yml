@@ -1,0 +1,30 @@
+name: Replica MCP security smoke test
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/replica-mcp-security-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-public-health-and-auth:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check public health endpoint
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 5 --retry-delay 5 \
+            https://replica-mcp-server-dfj0.onrender.com/health -o health.json
+          python -c "import json; d=json.load(open('health.json')); assert d.get('ok') is True, d; assert d.get('bearer_auth_configured') is True, d"
+      - name: Verify MCP rejects unauthenticated requests
+        run: |
+          set -euo pipefail
+          code="$(curl --silent --show-error --output mcp-response.json --write-out '%{http_code}' \
+            -X POST https://replica-mcp-server-dfj0.onrender.com/mcp \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ysl-smoke","version":"1.0"}}}')"
+          test "$code" = "401"
