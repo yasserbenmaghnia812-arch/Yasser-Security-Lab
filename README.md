@@ -2,7 +2,7 @@
 
 Arabic-first, permission-first Android security workbench. The repository contains an Android client, a FastAPI service, Supabase schema, and GitHub Actions workflows for static source checks and authorized APK analysis.
 
-> **Current verified status (2026-11-11):** the Android Debug APK builds successfully in GitHub Actions; the API unit tests pass; the Supabase project is active, its core tables have RLS enabled, and its private `apk-uploads` bucket is present. The self-test APK workflow has completed APKtool/JADX and is currently running MobSF. Cloud API availability and the APK upload-to-remote-analysis path still require a configured/deployed Render service and GitHub Actions credentials. No successful real-user APK upload has yet been verified.
+> **Current verified status (2026-11-11):** the Android Debug APK builds successfully in GitHub Actions; the API unit tests pass; the Supabase project is active, its core tables have RLS enabled, and its private `apk-uploads` bucket is present. The self-test APK workflow completed Apktool, partial JADX decompilation, and MobSF static analysis; its report artifact is available from the linked Actions run. Cloud API availability and the APK upload-to-remote-analysis path still require a configured/deployed Render service and GitHub Actions credentials. No successful real-user APK upload has yet been verified.
 
 ## Included
 
@@ -32,6 +32,9 @@ Arabic-first, permission-first Android security workbench. The repository contai
 - `docs/`: tool catalogue, deployment notes, and security guidance.
 
 ## Build and test
+
+- Debug APK: `.github/workflows/android-apk.yml` (ready for device testing; debug-signed and debuggable).
+- Signed Release APK: `.github/workflows/android-release.yml` (non-debuggable; requires your own persistent release keystore in four protected GitHub Actions secrets: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`). This release workflow has not yet been run because the private signing keystore is not configured.
 
 Android Debug APK:
 
