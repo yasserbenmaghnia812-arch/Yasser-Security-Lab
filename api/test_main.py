@@ -404,3 +404,27 @@ def test_apk_upload_stores_private_asset_and_dispatches_analysis(monkeypatch):
     assert dispatched[0][0] == "job-12345678"
     assert dispatched[0][1].startswith("https://example.supabase.co/storage/v1/object/sign/")
     assert dispatched[0][2] == "sample.apk"
+
+
+def test_agent_proposal_requires_authentication():
+    response = client.post("/v1/agent/tasks", json={
+        "asset_id": "asset-123456",
+        "action": "full-static-suite",
+        "objective": "Run defensive static checks on my repository."
+    })
+    assert response.status_code == 401
+
+
+def test_agent_proposal_rejects_unapproved_actions():
+    authenticated_user()
+    response = client.post("/v1/agent/tasks", json={
+        "asset_id": "asset-123456",
+        "action": "execute-shell",
+        "objective": "Run an arbitrary shell command."
+    })
+    assert response.status_code == 422
+
+
+def test_agent_approval_requires_authentication():
+    response = client.post("/v1/agent/tasks/12345678-1234-1234-1234-123456789012/approve")
+    assert response.status_code == 401
