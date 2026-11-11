@@ -52,10 +52,22 @@ jobs:
           mkdir -p "$HOME/tools/jadx"
           unzip -q /tmp/jadx.zip -d "$HOME/tools/jadx"
       - name: Run Apktool and JADX
+        shell: bash
         run: |
-          apktool d -f reports/yasser-security-lab.apk -o reports/apktool
-          "$HOME/tools/jadx/bin/jadx" --show-bad-code -d reports/jadx reports/yasser-security-lab.apk
-          apkanalyzer manifest print reports/yasser-security-lab.apk > reports/manifest.xml
+          set -uo pipefail
+          mkdir -p reports/apktool reports/jadx
+          apktool --version | tee reports/apktool-version.txt
+          find "$HOME/tools/jadx" -maxdepth 4 -type f -name jadx -print
+          JADX_BIN="$(find "$HOME/tools/jadx" -maxdepth 4 -type f -name jadx -print -quit)"
+          test -n "$JADX_BIN"
+          chmod +x "$JADX_BIN"
+          apktool d -f reports/yasser-security-lab.apk -o reports/apktool > reports/apktool.log 2>&1
+          APKTOOL_STATUS=$?
+          "$JADX_BIN" --show-bad-code -d reports/jadx reports/yasser-security-lab.apk > reports/jadx.log 2>&1
+          JADX_STATUS=$?
+          echo "Apktool exit: $APKTOOL_STATUS" | tee reports/decompiler-status.txt
+          echo "JADX exit: $JADX_STATUS" | tee -a reports/decompiler-status.txt
+          test "$APKTOOL_STATUS" -eq 0 -o "$JADX_STATUS" -eq 0
       - name: Start MobSF static analyzer
         run: |
           key="$(openssl rand -hex 32)"
