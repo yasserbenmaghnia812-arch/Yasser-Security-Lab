@@ -115,26 +115,67 @@ jobs:
           hash="$(python -c 'import json; print(json.load(open("reports/mobsf-upload.json"))["hash"])')"
           curl --fail -X POST --data-urlencode "hash=$hash" -H "Authorization: $MOBSF_KEY" http://127.0.0.1:8000/api/v1/scan -o reports/mobsf-scan.json
           curl --fail -X POST --data-urlencode "hash=$hash" -H "Authorization: $MOBSF_KEY" http://127.0.0.1:8000/api/v1/report_json -o reports/mobsf-report.json
-      - name: Summarize analysis outputs
+      - name: Validate and summarize APK analysis
         if: always()
         env:
+          JOB_ID: ${{ inputs.job_id }}
           APK_NAME: ${{ inputs.file_name }}
         run: |
-          APKTOOL_FILES="$(find reports/apktool -type f 2>/dev/null | wc -l)"
-          JADX_SOURCES="$(find reports/jadx -type f -name '*.java' 2>/dev/null | wc -l)"
-          {
-            echo "# APK analysis"
-            echo
-            echo "- Job: ${{ inputs.job_id }}"
-            echo "- File: $APK_NAME"
-            echo "- APK SHA-256: $(cat reports/sha256.txt 2>/dev/null || echo unavailable)"
-            echo "- Apktool extracted files: $APKTOOL_FILES"
-            echo "- JADX Java files: $JADX_SOURCES"
-            echo "- MobSF JSON report: $([ -s reports/mobsf-report.json ] && echo available || echo unavailable)"
-            echo
-            echo "## Decompiler status"
-            cat reports/decompiler-status.txt 2>/dev/null || echo "Decompiler status was not recorded."
-          } > reports/SUMMARY.md
+          python - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          root = Path("reports")
+          text = (root / "decompiler-status.txt").read_text(errors="replace") if (root / "decompiler-status.txt").exists() else ""
+          def number(label):
+              match = re.search(rf"^{re.escape(label)}:\s*(\d+)", text, re.M)
+              return int(match.group(1)) if match else 127
+
+          apktool_exit = number("Apktool exit")
+          apktool_files = number("Apktool output files")
+          jadx_exit = number("JADX exit")
+          jadx_sources = number("JADX Java source files")
+          report_path = root / "mobsf-report.json"
+          report = json.loads(report_path.read_text()) if report_path.exists() else None
+
+          lines = [
+              "# APK analysis summary",
+              "",
+              f"- Job ID: {os.environ['JOB_ID']}",
+              f"- APK file: {os.environ['APK_NAME']}",
+              f"- APK SHA-256: {(root / 'sha256.txt').read_text().strip() if (root / 'sha256.txt').exists() else 'unavailable'}",
+              f"- Apktool: exit {apktool_exit}; extracted files {apktool_files}",
+              f"- JADX: exit {jadx_exit}; Java source files {jadx_sources}",
+          ]
+          if report:
+              lines.extend([
+                  f"- MobSF: report generated; version {report.get('version', 'unknown')}",
+                  f"- Application: {report.get('app_name', 'unknown')} ({report.get('package_name', 'unknown')})",
+                  f"- Android SDK: min {report.get('min_sdk', 'unknown')}; target {report.get('target_sdk', 'unknown')}",
+              ])
+              for section, summary_key in [
+                  ("manifest_analysis", "manifest_summary"),
+                  ("code_analysis", "summary"),
+                  ("certificate_analysis", "certificate_summary"),
+                  ("network_security", "network_summary"),
+              ]:
+                  summary = report.get(section, {}).get(summary_key, {})
+                  if summary:
+                      lines.append(f"- {section}: " + ", ".join(f"{key}={value}" for key, value in summary.items()))
+          else:
+              lines.append("- MobSF: report missing")
+          (root / "SUMMARY.md").write_text("\n".join(lines) + "\n")
+          print((root / "SUMMARY.md").read_text())
+
+          if apktool_exit != 0 or apktool_files <= 0:
+              raise SystemExit("APK analysis failed: Apktool did not produce decoded files.")
+          if jadx_sources <= 0:
+              raise SystemExit("APK analysis failed: JADX produced no Java source files.")
+          if not report:
+              raise SystemExit("APK analysis failed: MobSF JSON report is missing or invalid.")
+          PY
       - name: Upload analysis reports
         if: always()
         uses: actions/upload-artifact@v4
