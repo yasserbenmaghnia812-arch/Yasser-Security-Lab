@@ -41,7 +41,7 @@ Do not send secrets in chat or commit them to Git. Add them through Render's Env
 
 ## AI advisory model
 
-The API supports OpenRouter's free open-weight model routes. Defaults are `cohere/north-mini-code:free` with `nvidia/nemotron-3.5-lightning:free` as fallback. Both are configurable with `OPENROUTER_MODEL` and `OPENROUTER_FALLBACK_MODEL`. The free catalog and rate limits can change; no paid model is selected by default. The assistant is advisory-only and has no tool execution permissions.
+The API supports OpenRouter's free open-weight model routes. Defaults are `cohere/north-mini-code:free` with `nvidia/nemotron-3.5-lightning:free` as fallback. Both are configurable with `OPENROUTER_MODEL` and `OPENROUTER_FALLBACK_MODEL`. These routes are currently listed at $0 but are rate-limited and can change. The advisory endpoint applies best-effort redaction to common PEM keys, AWS/GitHub/Stripe credentials, Bearer tokens, JWTs, and labelled key/password assignments before forwarding prompts. This is not a complete data-loss-prevention system: do not submit passwords, private keys, personal data, or confidential source code to an external model. The assistant is advisory-only and has no tool execution permissions.
 
 ## Current tool execution model
 
