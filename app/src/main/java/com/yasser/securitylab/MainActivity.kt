@@ -53,6 +53,7 @@ private fun AssistantReviewPanel(accessToken: String, enabled: Boolean) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("مساعد الأمن السيبراني", fontWeight = FontWeight.Bold, fontSize = 18.sp)
             Text("تحليل وتوصيات دفاعية عبر الخادم. لا يمتلك صلاحية تشغيل الأدوات أو تعديل الملفات.")
+            Text("تنبيه خصوصية: الاستشارة تُرسل إلى نموذج خارجي عبر الإنترنت. ينقّح الخادم أنماط الأسرار الشائعة، لكن لا توجد ضمانة لإزالة كل البيانات الحساسة؛ لا ترسل كلمات مرور أو مفاتيح أو بيانات شخصية.")
             if (!enabled) {
                 Text("المساعد السحابي غير مفعّل: يحتاج الخادم إلى مفتاح OpenRouter اختيارياً. استخدم المحادثة المحلية أعلاه عند توفر خادم استدلال محلي.")
             } else {
