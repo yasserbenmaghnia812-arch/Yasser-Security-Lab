@@ -64,3 +64,20 @@ No scanner accepts arbitrary shell input. Active network workflow excludes explo
 ## Replica MCP
 
 The API connects to the configured HTTPS Streamable HTTP endpoint using the server-only `REPLICA_MCP_BEARER_TOKEN`. The Android client receives only its authenticated Supabase access token. Tool discovery is restricted to `REPLICA_TOOL_ALLOWLIST`; every tool call requires explicit approval. `workspace_run` accepts exact command argument lists only. `workspace_write` is limited to 200 KB per call; confirm the requested path and content before authorizing a write. The remote MCP server must enforce its own workspace-root isolation and authentication.
+
+
+## Replica MCP and approval-gated agent
+
+- `GET /v1/replica/tools` discovers the allowlisted tools from the configured Replica MCP Streamable HTTP endpoint. Requires Supabase Bearer authentication.
+- `POST /v1/replica/call` invokes one allowlisted tool and requires `user_approved=true` on every call. `workspace_run` is restricted to exact approved command forms.
+- `POST /v1/agent/plan` previews only the fixed `api_tests` and `android_debug_apk` tasks.
+- `POST /v1/agent/execute` dispatches only those fixed tasks after explicit authenticated approval.
+- `POST /v1/agent/tasks` saves a persistent static-analysis proposal without dispatching.
+- `POST /v1/agent/tasks/{task_id}/approve` rechecks user ownership and asset authorization before dispatch.
+
+Additional server-only environment variables:
+
+- `REPLICA_MCP_URL` — defaults to the existing Replica MCP service endpoint.
+- `REPLICA_MCP_BEARER_TOKEN` — service-to-service token; never expose it to Android.
+
+Apply `supabase/migrations/202611110001_agent_tasks.sql` before using persistent static-analysis proposals. The Android app never receives the Replica MCP bearer token.
