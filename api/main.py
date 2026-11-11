@@ -511,8 +511,6 @@ async def upload_apk(
     return {"status":"queued","job_id":job["id"],"asset_id":asset["id"],"file_name":safe_name,"message":"APK uploaded and analysis workflow dispatched."}
 
 
-@app.post("/v1/assistant/review")
-
 SENSITIVE_TEXT_PATTERNS = [
     (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.I | re.S), "[REDACTED_PRIVATE_KEY]"),
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "[REDACTED_AWS_ACCESS_KEY]"),
@@ -531,6 +529,7 @@ def redact_sensitive_text(value: str) -> tuple[str, bool]:
     return redacted, redacted != value
 
 
+@app.post("/v1/assistant/review")
 def assistant_review(request: AssistantRequest, user: dict[str, Any] = Depends(current_user)):
     api_key = os.getenv("OPENROUTER_API_KEY", "")
     if not api_key:
