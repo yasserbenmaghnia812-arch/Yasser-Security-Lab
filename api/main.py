@@ -516,9 +516,9 @@ SENSITIVE_TEXT_PATTERNS = [
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "[REDACTED_AWS_ACCESS_KEY]"),
     (re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b|\bgithub_pat_[A-Za-z0-9_]{20,}\b"), "[REDACTED_GITHUB_TOKEN]"),
     (re.compile(r"\bsk_(?:live|test)_[A-Za-z0-9]{20,}\b"), "[REDACTED_PAYMENT_SECRET]"),
-    (re.compile(r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]{16,}"), r"\1[REDACTED_TOKEN]"),
+    (re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{16,}"), r"\1[REDACTED_TOKEN]"),
     (re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"), "[REDACTED_JWT]"),
-    (re.compile(r"(?i)\b(api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|secret)\s*([:=])\s*[\"']?[A-Za-z0-9._~+/=-]{8,}[\"']?"), r"\1\2[REDACTED]"),
+    (re.compile(r"(?i)(?<![A-Za-z0-9])(api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|secret)\s*([:=])\s*[\"']?[A-Za-z0-9._~+/=-]{8,}[\"']?"), r"\1\2[REDACTED]"),
 ]
 
 
