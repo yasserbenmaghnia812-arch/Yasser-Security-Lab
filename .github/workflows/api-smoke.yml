@@ -4,6 +4,10 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/api-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/api-smoke.yml'
   workflow_dispatch:
 
 permissions:
@@ -19,13 +23,15 @@ jobs:
           curl --fail --silent --show-error --retry 8 --retry-delay 5 \
             https://yasser-security-lab-api-7w2p.onrender.com/health -o health.json
           python -c "import json; d=json.load(open('health.json')); assert d.get('status') == 'ok', d"
-      - name: Verify authenticated agent and Replica routes
+      - name: Verify protected Replica and agent routes
         run: |
           set -euo pipefail
-          for path in /v1/replica/tools /v1/agent/plan; do
-            code="$(curl --silent --show-error --output response.json --write-out '%{http_code}' \
-              "https://yasser-security-lab-api-7w2p.onrender.com$path")"
-            test "$code" = "401"
-          done
-
-# Re-run smoke checks after the API deployment containing the Replica routes.
+          replica_code="$(curl --silent --show-error --output replica-response.json --write-out '%{http_code}' \
+            https://yasser-security-lab-api-7w2p.onrender.com/v1/replica/tools)"
+          agent_code="$(curl --silent --show-error --output agent-response.json --write-out '%{http_code}' \
+            -X POST https://yasser-security-lab-api-7w2p.onrender.com/v1/agent/plan \
+            -H 'Content-Type: application/json' --data '{"task_type":"api_tests"}')"
+          echo "Replica unauthenticated GET status: $replica_code"
+          echo "Agent unauthenticated POST status: $agent_code"
+          test "$replica_code" = "401"
+          test "$agent_code" = "401"
